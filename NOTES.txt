@@ -1,0 +1,240 @@
+Names: arcade,  cadre,  acres,  kayo,  pounce,  upgo, drum, drumk, recollection, pile, muster, kvlot, plenty, rodeo, ruckus, okdb
+
+Redis flaws:
+Bloated command set, e.g. INCR and INCRBY 2 different commands
+The transaction thing MULTI seems bolted on and awkard
+Doesn’t use a standard serialization format like JSON
+Maintainer doesn’t care about Windows support
+API for Bitsets is not very rich (just SETBIT/GETBIT or can you use other string functions?)
+
+
+Similar to REDIS, but use JSON as serialization,e.g.
+Be truly cross-platform (REDIS favors Unix)
+Also make the API more consistent/concise/elegant than REDIS
+
+Redis bitmap story: http://blog.getspool.com/2011/11/29/fast-easy-realtime-metrics-using-redis-bitmaps/
+
+Also see judy lists: http://judy.sourceforge.net/index.html
+(is there a python wrapper?)
+
+Concepts & Ideas:
+	Data types for values:
+		Int
+		Float
+		Decimal/money 
+		String (use builtin)
+		List (take a look at blist, may be faster: http://pypi.python.org/pypi/blist/1.3.4, it also includes sortedlist, sortedset, etc. )
+		Priority Queue
+		Set (use builtin)
+		Dict (use builtin)
+		Trie (use Biopython trie)
+		Bitset (use bitarray)
+		Deque (use collections.dequeue)
+		Graph (use igraph or graph-tool)
+		Pandas array (pandas)
+		Rtree? (http://pypi.python.org/pypi/Rtree/0.6.0) 
+		Bloom filter? (http://code.google.com/p/python-bloom-filter/)
+	Use Blosc (not zlib) for compression, see benchmarks here, Blosc is very fast: https://github.com/FrancescAlted/python-blosc/wiki. Also see python-snappy for comparison: http://pypi.python.org/pypi/python-snappy 
+	Wrap non-builtin stuff like trie, bitset, etc—actually wrap all of them—in our own api abstractions in order to control what can be called
+	And to give a level of indirection. E.g. if we allow stuff like
+		SET(‘key’, BITSET(‘11110101001’))
+		GET(‘key’).do_something()  then do_something should be our own wrapper method that calls into the bitarray class, we don’t want to expose
+		The underlying APIs—this gives us ability to control what we expose and also change the underlying implementation.
+
+	Idiom:
+		Declare the type of the thing you are setting first, e.g. 
+		SET(‘key’, TRIE())  empty trie
+		SET(‘key’, TRIE(‘{“foo”:1, “bar”:2}’)) create from JSON representation; but this means every type must have some JSON-representation,
+			-or should this be-
+		SET(‘key’, TRIE({“foo”:1, “bar”:2})) and if you want to use a JSON string you have to do SET(‘key’, TRIE(JSON(‘…’)))
+	I really like this idea of just leveraging Python cause it lets you do cool stuff like
+		x=GET(‘key’); SET(‘key2’, x * 2 if x > 20 else x * 3)
+		or
+		SET(‘key’, “,”.join(x for x in GET(‘otherkey’) if x % 2==0))
+
+	Allow multiple keyspaces:
+                USE <spacename>; sets the keyspace for the session
+	USING() returns name of current keyspace
+	This basically just creates a new table in the sqlite database and a new in-memory dict/or trie or whatever
+	Do we need to support CREATE <spacename>, or can we on the server just manually create a table with the right schema?
+	Don’t support DROP, it could be too destructive. To remove a keyspace manually delete the table on the server.
+	Consider including pandas for time series data.  YES; better than ndarray, it’s a superset of numpy functionality I think
+	Consider LOAD(key, string) method where string is a URL (or UNC path) and it automatically loads
+	Make sure all 3rd party packages run on all platforms and check if they release GIL when possible
+	Consider implementing numpy types including arrays/matrices and exposing matrix operations on the server
+	Consider exposing network (or igraph http://cneurocvs.rmki.kfki.hu/igraph/download.html, implemented in C, or graph-tool (looks promising), also in C/C++) as well
+	Consider implementing the bulk of this in Cython? With liberal use of “with nogil” could help scaling if we use multiple threads on server side.
+	Good C-based Python bitarray bitset bitvector here: http://pypi.python.org/pypi/bitarray#downloads; except maybe it’s not the best thing if we know the bitset will be sparse
+	Consider using something other than built-in dict, see here: http://bugs.python.org/issue9520; 
+	   “At 8,000,0000 keys python defaultdict(int) starts showing almost O(N) behavior and gets unusable with 10,000,000+ unique keys.”
+		“The best existing implementation I've been able to find so far is one in the BioPython” 
+	
+	Also look at Judy arrays, also may be better than hash table—or not; looks like it only takes int keys
+http://www.nothings.org/computer/judy/
+http://pypi.python.org/pypi/judy
+
+	TODO: profile this trie vs. builtin dict for memory and speed with very large keysets
+	Note that the Trie thing would make this nosql server ideal for doing autocomplete stuff, since tries have prefix matching
+	In addition to the idea of using Trie as main data structure we should support using a Trie as a VALUE. This can’t be represented in JSON though; so maybe we should take the REDIS
+		approach of building things up incrementally. OTOH I guess you could represent it in JSON as a dict. 
+	Use sqlite for journal (see journal_test for POC)
+	Use ujson (esnme/ultrajson) for JSON encoding/decoding
+	Support Pipelining & transactions at the same time via BEGIN/END, e.g. 
+	BEGIN
+		SET foo 20
+		INCR foo
+		GET foo
+	END
+	Consider using ; as statement delimiter so you can have BEGIN; SET foo 20; INCR foo; GET foo; END
+	Consider getting rid of BEGIN, END and using brackets to group statements into transactions
+{ SET foo 20; INCR foo; GET foo;}
+Or maybe just anything that’s submitted in one round trip automatically goes in a transaction, e.g. 
+	SET foo 20; SET foo2 30; SET foo3 50
+	Since we’re using zeromq, we should be able to support pub/sub similar to REDIS
+		Info on REDIS pub/sub  http://robots.thoughtbot.com/post/6325247416/redis-pub-sub-how-does-it-work
+		ZeroMQ pub/sub http://techno-weenie.net/2011/6/17/zeromq-pub-sub/
+	My idea would be for subscribers to be able to subscribe to changes to keys, not a generic pub/sub mechanism.
+	Support storage of int, float, date, datetime, sequence (string/list), dict, bitvector (https://engineering.purdue.edu/kak/dist/BitVector-3.0.html)
+	TODO: google other high performance datatypes for python esp. implemented in C, e.g. from numpy/scipy. Like maybe include MATRIX as supported type? (see http://docs.scipy.org/doc/scipy/reference/sparse.html)
+	Other data types: decimal? Use gmpy for multiprecision arithmetic? (http://code.google.com/p/gmpy/) 
+	Consider math/statistical functions? E.g. SUM key (sum all items at key), STDDEV, etc…
+	Consider using PyTables/HDF for persistence, also see info on Blosc and PyPy carray module
+	Use JSON as serialization format, but need to consider how to represent non json types like matrix, bitvector. As JSON uses UTF-8 we implicitly support that.
+	Allow each command to work in bulk mode, e.g. GET key1, key2, key3 returns a list of [value1, value2, value3] (or maybe a dictionary of {key1:value1,key2:value2,key3:value3}
+	Treat strings and lists as sequences with the same commands
+	Need to think about clustering/failover…see info on redis master/slave setup
+	Use SQLLite for persistent store, simple table with key:value where value is string (JSON)
+	Persistence:
+		In a method that mutates the dictionary
+			Make the change to the in-memory representation
+			Get the new value
+			Enqueue to another thread (or process?) a write to the TXLOG a SQL statement with timestamp and current value:
+				2011-12-13T13:39:44.655000; INSERT OR REPLACE into table (key, value) values (key, value)
+		Note: potential error if app crashes before writing the log; the log write queue can back up, etc…
+		In a subprocess (not a thread, so we utilize another core) we have a log reader that:
+			Maintains timestamp TS of latest TXLOG statement applied
+			Reads next line from TXLOG with timestamp > TS
+			Executes the statement to update the persistent store and does a COMMIT
+			Updates TS to disk; this basically says the database is up to date as of this time
+		Need to think about how to truncate the log and/or make it rotate like RRD
+Transactions
+	We may execute multiple commands e.g. {CMD1, CMD2, CMD3, …}
+	At the beginning we create a new temp dict D
+	Each command modifies only D
+	At the end we update the main table from D
+			
+
+
+In REDIS
+	HMSET user:1000  username  kevin  password p02982
+In this
+	DUPDATE user:1000 {“username”:”kevin”, “password”:”p02982”}
+	Or
+	SET(‘user:1000’, {“username”:”kevin”, “password”:”p02982”})
+	Or
+SET(‘user:1000’, JSON(‘{“username”:”kevin”, “password”:”p02982”}’))
+
+
+API
+
+Key commands
+DEL key – delete key if it exists
+EXISTS key – does key exist?
+EXPIRE key seconds_or_timestamp – if an int, expire in N secs. If float, interpret as time_t, else interpret as YYYYMMDDHHMMSS
+PERSIST key – remove expiration
+RANDKEY – return a random key from a keyspace
+RENAME keyold keynew – rename a key
+TTL key – get ttl for a key that has expiry
+TYPE key – get type of data at key
+EVAL key lambda – execute the lambda and return the result
+APPLY key lambda – execute lambda on value and set the new value (just does EVAL and sets the result)
+FILTER key lambda – where lambda has access to the re module; returns only the items that pass the filter (but isn’t this just the same as EVAL?)
+RANDOMKEY – how to do this in O(1) in Python without instantiating dict.keys()?
+
+General commands
+SET key value [, key value…] 
+GET key [,key…]
+GETSET key value – set to new value and return old value
+
+Bitsets
+GETBIT
+SETBIT
+OR key1 [key2 keyN…]
+AND key1 [key2 keyN…]
+XOR 
+NOT key
+
+
+Commands for integer keys
+INCR key <by_amount>  -  this is just SET(‘key’, GET(‘key’)+1)
+DECR key <by_amount> - this is just SET(‘key’, GET(‘key’)-1)
+
+Sequence commands
+APPEND key json – append value to existing key if it exists, else equivalent to SET key value
+EXTEND key json
+GETSLICE key start stop stride
+SETSLICE key start newvalue [stop]
+DELSLICE key start stop
+LEN key – get length 
+COUNT key json – return number of occurrences of value in sequence
+REMOVE key json – remove first value from sequence
+POP key <index> – remove and return item at index
+MATCH key regex – return items that match regex
+	(maybe not needed since this could be done with FILTER if FILTER has access to re module)
+SORT key <lambda> – sort the values in place, optionally using the lambda
+
+Dict commands
+H
+
+Problems/Questions
+To really make the multiblock thing useful, e.g. {CMD1, CMD2} we really need some way of setting and referencing vars at a minimum, and perhaps need operators/arithmetic & control structures like IF/ELSE.
+e.g. {x=GET foo; SET bar x*2}
+what about: SET(‘foo’, GET(‘foo’)*2)
+Could use pyparsing or some such to implement some funky DSL; this would further distinguish from REDIS, e.g. 
+
+But is that overkill? What about 
+1.	Allowing reference to existing values easily via $key, e.g. 
+a.	{SET newkey $oldkey} which would basically be the same as {x = GET oldkey; SET newkey x}
+b.	This could be extended to allow transformations via Python lambda too, e.g. this sets newkey to the value at oldkey * 2 if the oldkey value is even, else oldkey
+i.	BEGIN; SET newkey $oldkey  => lambda x: x * 2 if x % 2 ==0 else x; END
+2.	using the table itself for variables by making it easy to create temp keys that are automatically deleted after the transaction using <name> convention? e.g.
+SET @1 100; SET mykey @1 => lambda x : x * 2; 
+
+
+How to do the equivalent of BLPOP; we don’t want to block in the server waiting for stuff…
+
+
+The more I think about it the more I like the idea of using a syntax like this; as it’s just Python. Then we can use compile/eval to run it instead
+Of developing our own parser; it also allows more expressive stuff
+GET(‘foo’)
+SET(‘bar’, 100)
+SET(‘bar’, lambda : GET(‘foo’) + GET(‘foo2’) if GET(‘foo3’) > 20 else GET(‘foo4’))
+See here: http://lybniz2.sourceforge.net/safeeval.html for how to make this safe
+
+Use zeromq for comm layer (less fat than gunicorn/wsgi), also see https://github.com/traviscline/gevent-zeromq
+Rationale; the more C/C++ used the less we notice the GIL
+
+Or could we use messagepack rpc?
+http://msgpack.org/
+
+
+Downside of this is you can’t just fire up telnet or use HTTP to 
+here are other ways to accel¬er¬ate the GIL manip¬u¬la¬tion or avoid it:
+- call ”time.sleep()”
+– set ”sys.setcheckinterval()”
+– run Python in opti¬mized mode
+– dump process-intensive tasks into C-extensions
+– use the sub¬process mod¬ule to exe¬cute commands
+Benchmark to see if this is feasible
+
+http://jessenoller.com/2009/02/01/python-threads-and-the-global-interpreter-lock/
+Take for a moment, the ”timemodule.c” code we pasted above. This means that if you have a threaded appli¬ca¬tion, and want the GIL to be released reg¬u¬larly by your threads, you can call ”time.sleep(.0001)” or some other tiny amount, and the GIL will be mag¬i¬cally released, and your other thread(s) will run. Most appli¬ca¬tion devel¬op¬ers wouldn’t like this solu¬tion, but it is a com¬mon “work around” for the GIL limitation.
+
+__________________________________________________________________
+
+Kevin T. Manley | BNY Mellon Asset Servicing
+Tel 203.341.3313 | Cell 860.978.0644 | kevin.manley@bwater.com
+ 
+You have received this email from a BNY Mellon employee providing 
+back office support to Bridgewater.
+
