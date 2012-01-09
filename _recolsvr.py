@@ -1,4 +1,17 @@
 """
+TODO: disallow storing embedded references, e.g.
+  put('x', [1,2,3])
+  put('y', [100, 200, get('x')])
+instead give a message to use copy(...)
+
+TODO: think about. If you have a class foobar that is supported and you have a bunch of these pickled in the
+sqlite db, then you change the name of the class, then try to load from db, you will get errors. Maybe have another
+level of indirection or directly store class name and only serialize the underlying Python type, e.g. instead of
+pickling wrappedlist store "wrappedlist" and pickle just a pure list.
+
+TODO: should we offer an alternative persistence mode like REDIS, where we just serialize the whole DB every N secs?
+TODO: offer a no-persistence mode where we don't even write to the journal.
+
 TODO: bug
 > put((1,2,3),'foo')
 trying to use non-string key fails in db writer
@@ -19,7 +32,7 @@ TODO: this fails
 > get('x')
 {u'cps': 8107.55247, u'res': [1, 2, 3, [10, 20, 30]]}
 
-because the embedded list isn't a fakelist...it's like we need to walk the tree of objects and convert
+because the embedded list isn't a wrappedlist...it's like we need to walk the tree of objects and convert
 everything, what a ballache...I really just want to be able to replace the metaclass of built in types...
 
 
@@ -360,6 +373,8 @@ Control synchronisation via explicit ssync(), hsync() commands
 Fewer server roundtrips, e.g. put('key', {"foo":"bar", "baz":"bip}) vs. hset("key", "foo", "bar" then hset "key" "baz" "bip"
 Slicing
 It doesn't crash (https://github.com/antirez/redis/issues/243)
+I can make it run in either embeddable or server mode (TODO: think about API when embedding)
+
 
 RECOL antipatterns
 -------------------------
@@ -529,7 +544,7 @@ class JournalWriterThread(threading.Thread):
         #self.curs.execute("insert into journal values(null, '%s')" % item)
         # TODO: need to batch these to improve performance
         #self.journal.write("insert into journal values(null, '%s')\n" % item)
-        msg = "".join(["%d:%s:%s:%s\n" % (txid, repr(key), cmd, val) for txid, key, cmd, val in tx])
+        msg = "".join(["%d:%s:%s:%s:%s\n" % (txid, repr(key), cmd, args, val) for txid, key, cmd, args, val in tx])
         #print("begin write journal")
         #print msg[:-1]
         #for item in tx:
@@ -593,7 +608,7 @@ def _key_from_obj(self):
         return key
 
 reallist = list
-class fakelist(reallist):
+class wrappedlist(reallist):
     """
      '__add__' - ok, returns a new list
      '__class__' - ok, idempotent
@@ -610,8 +625,8 @@ class fakelist(reallist):
      '__getslice__', ok, idempotent
      '__gt__', ok, idempotent
      '__hash__', ok, idempotent
-     '__iadd__', TODO:
-     '__imul__', TODO:
+     '__iadd__', ok, can't be used in eval, e.g. get('x') += 3
+     '__imul__', ok, can't be used in eval, e.g. get('x') *=3
      '__init__', ok, creates a new obj
      '__iter__', ok, idempotent
      '__le__', ok, idempotent
@@ -631,12 +646,12 @@ class fakelist(reallist):
      '__sizeof__', ok, idempotent
      '__str__', ok, idempotent
      '__subclasshook__', ok, idempotent
-     'append', TODO:
+     'append', OK--wrapped
      'count', ok, idempotent
-     'extend', TODO:
+     'extend', OK--wrapped:
      'index', ok, idempotent
-     'insert', TODO:
-     'pop', TODO:
+     'insert', OK--wrapped
+     'pop', OK--wrappped
      'remove', TODO:
      'reverse', TODO:
      'sort' TODO:
@@ -645,13 +660,44 @@ class fakelist(reallist):
         val = _wrap(val)
         key = _key_from_obj(self) # IMPORTANT: must come before superclass call
         reallist.append(self, val)
+        # NOTE: the idea here is that we want to avoid making a deep copy of the before value when possible.
+        # The rollback function should be the cheapest way possible to restore the data back to its previous state.
+        # Only make a copy of the previous value if there is no other way to achieve the same effect. It's not so
+        # much that we want rollbacks to be fast, it's that we want the happy path to be fast, and deep copies are
+        # expensive.
         ROLLBACKLIST.append((self.pop, ()))
-        COMMITLIST.append((TXID, key, "APPEND", serialize(val))) # TODO: get rid of all dotted qualifiers by rebinding
+        COMMITLIST.append((TXID, key, "APPEND", "", serialize(val))) # TODO: get rid of all dotted qualifiers by rebinding
+
+    def extend(self, val):
+        val = _wrap(val)
+        key = _key_from_obj(self) # IMPORTANT: must come before superclass call
+        prev_len = len(self)
+        reallist.extend(self, val)
+        val_len = len(self) - prev_len # we do it this way because val could be an iterator
+        ROLLBACKLIST.append((lambda self : [self.pop() for i in range(val_len)], (self,)))
+        COMMITLIST.append((TXID, key, "EXTEND", "", serialize(val)))
+
+    def insert(self, index, val):
+        val = _wrap(val)
+        key = _key_from_obj(self) # IMPORTANT: must come before superclass call
+        reallist.insert(self, index, val)
+        ROLLBACKLIST.append((self.pop, (index,)))
+        COMMITLIST.append((TXID, key, "INSERT", index, serialize(val)))
+
+    def pop(self, index=None):
+        key = _key_from_obj(self) # IMPORTANT: must come before superclass call
+        if index is None:
+            index = len(self) - 1
+        val = reallist.pop(self, index) # TODO: what if this is a ref; do we need to do a deepcopy?
+        ROLLBACKLIST.append((self.insert, (index, val)))
+        COMMITLIST.append((TXID, key, "POP", index, ""))
+        return val
 
     def _append(self, val):
         reallist.append(self, val)
 
-list = fakelist
+
+list = wrappedlist
 
 # toDict methods for types that don't have a direct representation in JSON
 realset = set
@@ -767,9 +813,10 @@ def p2j(s):
 def echo(value):
     return value
 
-def numkeys():
-    # NOTE: TODO: this includes internal keys starting with _, e.g. for managing expirations
-    return len(D)
+# TODO: obviated by info?
+#def numkeys():
+#    # NOTE: TODO: this includes internal keys starting with _, e.g. for managing expirations
+#    return len(D)
 
 def keys():
     return sorted(D.keys())
@@ -890,6 +937,7 @@ WRAPPERS = {type(None) : IDENTITY,
             str : IDENTITY,
             unicode : IDENTITY,
             reallist : _wrap_list,
+            wrappedlist : IDENTITY, # TODO: remember to put all wrapped types here too, e.g. put('x', [1,2,3]), get('x').append([10,20,30]), get('x').pop().append(20)
             }
 
 def _wrap(o):
@@ -941,12 +989,16 @@ def put(key, *args, **kwargs):
     fullkey, prev, val = _put(key, *args, **kwargs)
     # TODO: if item didn't exist before, then rollback should indicate to DEL the key, not set to None!
     ROLLBACKLIST.append((_put, fullkey + (prev,))) # TODO: what about rolling back key that had expiry?
-    COMMITLIST.append((TXID, fullkey, "SET", serialize(val))) # # TODO: get rid of all dotted qualifiers by rebinding
+    COMMITLIST.append((TXID, fullkey, "SET", "", serialize(val))) # # TODO: get rid of all dotted qualifiers by rebinding
 
 def incr(key, *args, **kwargs):
     value = get(key, *args, **kwargs) + kwargs.get("by",1)
     put(key, *(args+(value,)))
     return value
+
+def info():
+    # TODO: other useful info
+    return {"num_keys" : len(D), }
 
 def decr(key, *args, **kwargs):
     kwargs["by"] = -kwargs.get("by", 1)
@@ -992,12 +1044,20 @@ EVAL_LOCALS = { "datetime":datetime,
                 "list" : list,
                 "math" : math,
                 # commands
+                "copy" : copy,
                 "crash" : crash,
+                "decr" : decr,
                 "dump" : dump,
+                "echo" : echo,
+                "exists" : exists,
                 "get" : get,
                 "incr" : incr,
+                "j2p" : j2p,
                 "kind" : kind,
-                "decr" : decr,
+                "length" : length,
+                "nop" : nop,
+                "p2j" : p2j,
+                "ping" : ping,
                 "put" : put,
               }
 
@@ -1166,7 +1226,7 @@ class Server:
                 result = ujson_dumps({"err" : "%s: %s" % (e.__class__.__name__, str(e))})
             else:
                 if COMMITLIST:
-                    COMMITLIST.append((TXID, "", "COMMIT", "")) # TODO: get rid of all dotted qualifiers by rebinding
+                    COMMITLIST.append((TXID, "", "COMMIT", "", "")) # TODO: get rid of all dotted qualifiers by rebinding
                     journal_queue.put(COMMITLIST)
             finally:
                 #finish = time.clock()
