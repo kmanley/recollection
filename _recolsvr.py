@@ -653,7 +653,7 @@ class wrappedlist(reallist):
      'insert', OK--wrapped
      'pop', OK--wrappped
      'remove', TODO:
-     'reverse', TODO:
+     'reverse', OK-wrapped
      'sort' TODO:
     """
     def append(self, val):
@@ -688,10 +688,26 @@ class wrappedlist(reallist):
         key = _key_from_obj(self) # IMPORTANT: must come before superclass call
         if index is None:
             index = len(self) - 1
-        val = reallist.pop(self, index) # TODO: what if this is a ref; do we need to do a deepcopy?
+        val = reallist.pop(self, index) # TODO: what if this is a ref; do we need to do a copy? or deepcopy?
         ROLLBACKLIST.append((self.insert, (index, val)))
         COMMITLIST.append((TXID, key, "POP", index, ""))
         return val
+
+    def reverse(self):
+        key = _key_from_obj(self) # IMPORTANT: must come before superclass call
+        reallist.reverse(self)
+        ROLLBACKLIST.append((self.reverse, ()))
+        COMMITLIST.append((TXID, key, "REVERSE", "", ""))
+
+    def sort(self):
+        key = _key_from_obj(self) # IMPORTANT: must come before superclass call
+        prev = self[::] # NOTE: shallow copy
+        reallist.sort(self)
+        ROLLBACKLIST.append((self._set, (prev,)))
+        COMMITLIST.append((TXID, key, "SORT", "", ""))
+
+    def _set(self, val):
+        self[::] = val
 
     def _append(self, val):
         reallist.append(self, val)
@@ -1037,8 +1053,8 @@ def mutate(key):
     pass # TODO: return object from D (not copied) to allow mutation, then somehow do a put(key, obj)
          # at the end of the tx
 
-
-EVAL_GLOBALS = {"__builtins" : None}
+# TODO: put back some globals e.g. id, abs, ...
+EVAL_GLOBALS = {"__builtins__" : None}
 #make a list of safe functions
 EVAL_LOCALS = { "datetime":datetime,
                 "list" : list,
