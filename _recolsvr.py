@@ -1176,6 +1176,7 @@ EVAL_GLOBALS = {
 EVAL_LOCALS = { "datetime":datetime, # TODO: what's the difference having this in locals vs. globals?
                 "list" : list,
                 "math" : math,
+                "random" : random,
                 # commands
                 "copy" : copy,
                 "crash" : crash,

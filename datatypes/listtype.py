@@ -27,8 +27,8 @@ class wrappedlist(list):
      '__getslice__', ok, idempotent
      '__gt__', ok, idempotent
      '__hash__', ok, idempotent
-     *'__iadd__', ok, can't be used in eval, e.g. get('x') += 3
-     *'__imul__', ok, can't be used in eval, e.g. get('x') *=3
+     *'__iadd__', ok, overridden
+     *'__imul__', ok, overridden
      '__init__', ok, creates a new obj
      '__iter__', ok, idempotent
      '__le__', ok, idempotent
@@ -44,7 +44,7 @@ class wrappedlist(list):
      '__rmul__',  ok, idempotent
      '__setattr__', ?
      *'__setitem__', ok, wrapped
-     *'__setslice__', ok, x[y:z] = a can't be called with expression syntax
+     *'__setslice__', ok, wrapped
      '__sizeof__', ok, idempotent
      '__str__', ok, idempotent
      '__subclasshook__', ok, idempotent
@@ -59,18 +59,28 @@ class wrappedlist(list):
      'sort' TODO:
     """
     def __delitem__(self, *args, **kwargs):
+        # No point in implementing, it's the same as pop()
         raise NotImplementedError("please use list.pop(index) instead")
 
     def __delslice__(self, *args, **kwargs):
+        # NOTE: we could implement but shorthand syntax isn't supported in eval(...) anyway
         raise NotImplementedError("please use one or more calls to list.pop(index) instead")
 
+    def __setslice__(self, *args, **kwargs):
+        # NOTE: we could implement but shorthand syntax isn't supported in eval(...) anyway
+        raise NotImplementedError("please use set(key, idx, ..., obj) instead")
+
     def __iadd__(self, *args, **kwargs):
+        # No point in implementing as this is the same as extend(...)
         raise NotImplementedError("please use list.extend(obj) or put(key, get(key) + obj) instead")
 
     def __imul__(self, *args, **kwargs):
+        # NOTE: we could implement but shorthand syntax isn't supported in eval(...) anyway
         raise NotImplementedError("please use put(key, get(key) * other) instead")
 
     def __setitem__(self, *args, **kwargs):
+        # TODO: consider implementing this so that e.g. random.shuffle(get('x')) works...
+        # but make sure that self[i] is not a wrapped type, else we could lose a journal entry
         raise NotImplementedError("please use put(key, index0, ...indexN, obj) instead")
 
     def append(self, val):
@@ -127,7 +137,7 @@ class wrappedlist(list):
         return self[::] # TODO: this is shallow copy, do we need deepcopy?
 
     def _set(self, val):
-        self[::] = val
+        list.__setslice__(self, 0, len(self), val)
 
     def _append(self, val):
         list.append(self, val)
