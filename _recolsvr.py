@@ -1,4 +1,6 @@
 """
+# TODO: using logging instead of print
+
 TODO: disallow storing embedded references, e.g.
   put('x', [1,2,3])
   put('y', [100, 200, get('x')])
@@ -88,17 +90,6 @@ but this could involved 1 million rows in table for just this one key
 
 Pop from end of list can simply be journaled as DEL key[-1]
 Pop from begin
-
-
-
-
-
-
-
-
-
-
-
 
 TODO:
   - keep track of changes in a transaction and apply them all at once using dict.update
@@ -333,13 +324,10 @@ ZUNIONSTORE dest numkeys key [key...]       put('dest', get('key1').union(get('k
    [weights]
 EVAL
 
-
 SETNX key value                             nop() if exists('key') else put('key', 'value')
 
 Functions without an equivalent in REDIS
 expirations()   - get a list of all pending expirations
-
-
 
 SortedSets : use blist.sortedset
 
@@ -377,11 +365,9 @@ Slicing
 It doesn't crash (https://github.com/antirez/redis/issues/243)
 I can make it run in either embeddable or server mode (TODO: think about API when embedding)
 
-
 RECOL antipatterns
 -------------------------
-No!                 Yes!                why?
-len(get('key'))     length('key')       get(...) triggers journaling if the returned value is nonscalar
+
 
 """
 
@@ -391,17 +377,6 @@ import re, os, zmq, time, ujson, traceback, types, threading, sqlite3, copy, ran
 import tailer
 import decimal, datetime, numpy, heapq, bisect, blist, operator
 import pydoc
-
-#import binascii
-#import cPickle as pickle
-#_hexlify = binascii.hexlify
-#_unhexlify = binascii.unhexlify
-#_pickle_dumps = pickle.dumps
-#_pickle_loads = pickle.loads
-#def serialize(o):
-#    return _hexlify(_pickle_dumps(o, protocol=-1))
-#def deserialize(s):
-#    return _pickle_loads(_unhexlify(s))
 
 import cStringIO as StringIO
 # TODO:? too dangerous? import networkx as nx
@@ -450,9 +425,8 @@ LARGEST_LEXICAL_CHAR = '\xff'
 
 journal_queue = Queue.Queue()
 
-#from exceptions import Error
-
 # TODO: implement __slots__
+# TODO rename to ranklist?
 class scoreboard(object):
     def __init__(self, it=()): # it is iterable of (score, member)
         self._set = blist.sortedset(it)  # set of (score, member), ...
@@ -594,150 +568,9 @@ class JournalWriterThread(threading.Thread):
 
 
 # TODO: need to wrap objects in safe proxies, to avoid mutation side effects such as
-# SET('/foo', set([1,2,3])
-# GET('/foo').pop() # this is a GET but there is a mutation side effect! 
-# OOORRRR, do we? Maybe we should just keep track of any key that is either GET or SET and
-# write all of them to the journal, since operations done on objects returned by GET could have
-# had side effects...This could nicely sidestep the issue
 
-#OBJMAP = {}
-#COMMITLIST = []
-#ROLLBACKLIST = []
-
-#from datatypes.wraptype import _wrap
-
-reallist = list
-from datatypes.listtype import wrappedlist
-list = wrappedlist
-
-#listtype._wrap = _wrap
-#listtype._key_from_obj = _key_from_obj
-#listtype.COMMITLIST = COMMITLIST
-#listtype.ROLLBACKLIST = ROLLBACKLIST
-#list = listtype.wrappedlist
-
-#class wrappedlist(reallist):
-#    #TODO: the special methods can be called directly! So we either need to override __delitem__, etc.
-#    #  to do journaling or raise NotImplemented
-#    """
-#     '__add__' - ok, returns a new list
-#     '__class__' - ok, idempotent
-#     '__contains__', - ok, idempotent
-#     *'__delattr__', - TODO: wtf?
-#     *'__delitem__', - ok, overridden
-#     *'__delslice__', ok, overridden
-#     '__doc__', ok, idempotent
-#     '__eq__', ok, idempotent
-#     '__format__', ok, idempotent
-#     '__ge__', ok, idempotent
-#     '__getattribute__', ok, idempotent
-#     '__getitem__', ok, idempotent
-#     '__getslice__', ok, idempotent
-#     '__gt__', ok, idempotent
-#     '__hash__', ok, idempotent
-#     *'__iadd__', ok, can't be used in eval, e.g. get('x') += 3
-#     *'__imul__', ok, can't be used in eval, e.g. get('x') *=3
-#     '__init__', ok, creates a new obj
-#     '__iter__', ok, idempotent
-#     '__le__', ok, idempotent
-#     '__len__', ok, idempotent
-#     '__lt__', ok, idempotent
-#     '__mul__', ok, creates new obj
-#     '__ne__', ok, idempotent
-#     '__new__', ok, creates new obj
-#     '__reduce__', ok, used by pickle
-#     '__reduce_ex__', ok, used by pickle
-#     '__repr__', ok, idempotent
-#     '__reversed__', ok, idempotent
-#     '__rmul__',  ok, idempotent
-#     '__setattr__', ?
-#     *'__setitem__', ok, wrapped
-#     *'__setslice__', ok, x[y:z] = a can't be called with expression syntax
-#     '__sizeof__', ok, idempotent
-#     '__str__', ok, idempotent
-#     '__subclasshook__', ok, idempotent
-#     'append', OK--wrapped
-#     'count', ok, idempotent
-#     'extend', OK--wrapped:
-#     'index', ok, idempotent
-#     'insert', OK--wrapped
-#     'pop', OK--wrappped
-#     'remove', TODO:
-#     t'reverse', OK-wrapped
-#     'sort' TODO:
-#    """
-#    def __delitem__(self, *args, **kwargs):
-#        raise NotImplementedError("please use list.pop(index) instead")
-#
-#    def __delslice__(self, *args, **kwargs):
-#        raise NotImplementedError("please use one or more calls to list.pop(index) instead")
-#
-#    def __iadd__(self, *args, **kwargs):
-#        raise NotImplementedError("please use list.extend(obj) or put(key, get(key) + obj) instead")
-#
-#    def __imul__(self, *args, **kwargs):
-#        raise NotImplementedError("please use put(key, get(key) * other) instead")
-#
-#    def __setitem__(self, *args, **kwargs):
-#        raise NotImplementedError("please use put(key, index0, ...indexN, obj) instead")
-#
-#    def append(self, val):
-#        val = _wrap(val)
-#        key = _key_from_obj(self) # IMPORTANT: must come before superclass call
-#        reallist.append(self, val)
-#        # NOTE: the idea here is that we want to avoid making a deep copy of the before value when possible.
-#        # The rollback function should be the cheapest way possible to restore the data back to its previous state.
-#        # Only make a copy of the previous value if there is no other way to achieve the same effect. It's not so
-#        # much that we want rollbacks to be fast, it's that we want the happy path to be fast, and deep copies are
-#        # expensive.
-#        ROLLBACKLIST.append((self.pop, ()))
-#        COMMITLIST.append((TXID, key, "APPEND", "", serialize(val))) # TODO: get rid of all dotted qualifiers by rebinding
-#
-#    def extend(self, val):
-#        val = _wrap(val)
-#        key = _key_from_obj(self) # IMPORTANT: must come before superclass call
-#        prev_len = len(self)
-#        reallist.extend(self, val)
-#        val_len = len(self) - prev_len # we do it this way because val could be an iterator
-#        ROLLBACKLIST.append((lambda self : [self.pop() for i in range(val_len)], (self,)))
-#        COMMITLIST.append((TXID, key, "EXTEND", "", serialize(val)))
-#
-#    def insert(self, index, val):
-#        val = _wrap(val)
-#        key = _key_from_obj(self) # IMPORTANT: must come before superclass call
-#        reallist.insert(self, index, val)
-#        ROLLBACKLIST.append((self.pop, (index,)))
-#        COMMITLIST.append((TXID, key, "INSERT", index, serialize(val)))
-#
-#    def pop(self, index=None):
-#        key = _key_from_obj(self) # IMPORTANT: must come before superclass call
-#        if index is None:
-#            index = len(self) - 1
-#        val = reallist.pop(self, index) # TODO: what if this is a ref; do we need to do a copy? or deepcopy?
-#        ROLLBACKLIST.append((self.insert, (index, val)))
-#        COMMITLIST.append((TXID, key, "POP", index, ""))
-#        return val
-#
-#    def reverse(self):
-#        key = _key_from_obj(self) # IMPORTANT: must come before superclass call
-#        reallist.reverse(self)
-#        ROLLBACKLIST.append((self.reverse, ()))
-#        COMMITLIST.append((TXID, key, "REVERSE", "", ""))
-#
-#    def sort(self):
-#        key = _key_from_obj(self) # IMPORTANT: must come before superclass call
-#        prev = self[::] # NOTE: shallow copy
-#        reallist.sort(self)
-#        ROLLBACKLIST.append((self._set, (prev,)))
-#        COMMITLIST.append((TXID, key, "SORT", "", ""))
-#
-#    def _set(self, val):
-#        self[::] = val
-#
-#    def _append(self, val):
-#        reallist.append(self, val)
-#
-#
+#reallist = list
+#from datatypes.listtype import wrappedlist
 #list = wrappedlist
 
 # toDict methods for types that don't have a direct representation in JSON
@@ -794,6 +627,7 @@ class XPerSec:
         else:
             self.count += 1
 
+import globals
 from globals import _wrap, OBJMAP, TXID, COMMITLIST, ROLLBACKLIST, serialize, deserialize
 #TXID = 0
 D = {}
@@ -880,9 +714,13 @@ def randkey(iterate=False):
 def erase(key, index=None):
     # TODO: convert to update TXD
     if index != None:
+        # TODO: catch errors here and just return None
         del D[key][index]
     else:
-        del D[key]
+        try:
+            del D[key]
+        except KeyError:
+            pass
     # TODO: write to journal
     
 def exists(key, *idxs):
@@ -908,6 +746,47 @@ def _get(key, *idxs, **kwargs):
     OBJMAP[id(obj)] = (key,) + idxs
     return obj
 
+def page(data, pagenum, pagesize=50):
+    """
+    Example:
+    >>> put('x', [[x,x+1,x+2] for x in range(7)])
+    {u'cps': 3580.65882, u'res': None}
+    >>>
+    >>> page(get('x'), 1, 5)
+    {u'cps': 7575.42964,
+     u'res': {u'data': [[0, 1, 2], [1, 2, 3], [2, 3, 4], [3, 4, 5], [4, 5, 6]],
+              u'endidx': 5,
+              u'len': 7,
+              u'numpages': 2,
+              u'page': 1,
+              u'pagesize': 5,
+              u'startidx': 0}}
+    >>> page(get('x'), 2, 5)
+    {u'cps': 8079.80539,
+     u'res': {u'data': [[5, 6, 7], [6, 7, 8]],
+              u'endidx': 10,
+              u'len': 7,
+              u'numpages': 2,
+              u'page': 2,
+              u'pagesize': 5,
+              u'startidx': 5}}
+    """
+    # NOTE: pagenum is 1-based, not 0-based
+    # NOTE: you can pass pagenum=-1 for the last page, pagenum=-2 for 2nd to last page, etc.
+    datalen  = len(data)
+    numpages = int(math.ceil(datalen / float(pagesize)))
+    if pagenum < 0:
+        pagenum = numpages + pagenum + 1
+    startidx = ((pagenum-1) * pagesize)
+    endidx = startidx + pagesize
+    return {"len" : datalen,
+            "numpages" : numpages,
+            "page" : pagenum,
+            "pagesize" : pagesize,
+            "startidx" : startidx,
+            "endidx" : endidx,
+            "data" : data[startidx:endidx]}
+
 def length(key, *idxs, **kwargs):
     return len(_get(key, *idxs, **kwargs))
 
@@ -918,6 +797,9 @@ def copy(key, *idxs, **kwargs):
 
 #def get(key, *idxs, **kwargs):
 #    return fast_copy(_get(key, *idxs, **kwargs))
+
+def doc(obj):
+    return getattr(obj, "__doc__", None)
 
 def kind(key, *idxs):
     return _get(key, *idxs).__class__.__name__
@@ -962,44 +844,6 @@ def putnx(key, value):
     # TODO: journaling; only journal if it didn't exist!
     return D.setdefault(key, value)
 
-#UNWRAPPED_TYPES = set((int, long, str, unicode))
-
-#def _wrap_list(o):
-#    newobj = list()
-#    for item in o:
-#        newobj._append(_wrap(item))
-#    return newobj
-#
-#WRAPPERS = {type(None) : IDENTITY,
-#            bool : IDENTITY,
-#            int : IDENTITY,
-#            long : IDENTITY,
-#            float : IDENTITY,
-#            str : IDENTITY,
-#            unicode : IDENTITY,
-#            reallist : _wrap_list,
-#            wrappedlist : IDENTITY, # TODO: remember to put all wrapped types here too, e.g. put('x', [1,2,3]), get('x').append([10,20,30]), get('x').pop().append(20)
-#            }
-#
-#def _wrap(o):
-#    typ = type(o)
-#    try:
-#        wrapper = WRAPPERS[typ]
-#    except KeyError:
-#        raise Error("unsupported type '%s'" % typ)
-#
-#    return wrapper(o)
-#
-#    if typ == reallist:
-#        newobj = list()
-#        for item in o:
-#            newobj._append(_wrap(item))
-#        return newobj
-#    elif typ in UNWRAPPED_TYPES:
-#        return o
-#    else:
-#        raise Error("unsupported type '%s'" % typ)
-
 #from datatypes.wraptype import _wrap
 def _put(key, *args, **kwargs):
     idxs = args[:-1]
@@ -1009,6 +853,7 @@ def _put(key, *args, **kwargs):
         obj = D[key]
         for idx in idxs[:-1]:
             obj = obj[idx]
+        OBJMAP[id(obj)] = (key,) + idxs
         prev = obj[idxs[-1]]
         obj[idxs[-1]] = val
     else:
@@ -1075,9 +920,10 @@ def var(name, value=NOTSET):
         VARS[name] = value
         return value
 
-def mutate(key):
-    pass # TODO: return object from D (not copied) to allow mutation, then somehow do a put(key, obj)
-         # at the end of the tx
+def shutdown():
+    globals.SERVER.exit_requested = True
+
+from datatypes.listtype import wrappedlist
 
 # TODO: put back some globals e.g. id, abs, ...
 EVAL_GLOBALS = {
@@ -1102,7 +948,7 @@ EVAL_GLOBALS = {
                 #'copyright':
                 #'credits':
                 #'delattr':
-                'dict':dict,
+                #'dict':wrappeddict,
                 'dir':dir,
                 'divmod':divmod,
                 'enumerate':enumerate,
@@ -1130,7 +976,7 @@ EVAL_GLOBALS = {
                 'iter':iter,
                 'len':len,
                 #'license':
-                'list':list,
+                'list':wrappedlist,
                 #'locals':
                 'long':long,
                 'map':map,
@@ -1181,8 +1027,10 @@ EVAL_LOCALS = { "datetime":datetime, # TODO: what's the difference having this i
                 "copy" : copy,
                 "crash" : crash,
                 "decr" : decr,
+                "doc" : doc,
                 "dump" : dump,
                 "echo" : echo,
+                "erase" : erase,
                 "exists" : exists,
                 "get" : get,
                 "incr" : incr,
@@ -1190,9 +1038,11 @@ EVAL_LOCALS = { "datetime":datetime, # TODO: what's the difference having this i
                 "kind" : kind,
                 "length" : length,
                 "nop" : nop,
+                "page" : page,
                 "p2j" : p2j,
                 "ping" : ping,
                 "put" : put,
+                "shutdown" : shutdown,
               }
 
 class Server:
@@ -1275,7 +1125,7 @@ class Server:
                     break
 
     def run(self):
-        
+        globals.SERVER = self
         log.info("pid: %s" % os.getpid())
 
         # TODO: windows specific
@@ -1286,8 +1136,6 @@ class Server:
         self.load_from_db()
 
         self.journal_writer_thread.start()
-        
-        #counter = XPerSec("requests")
         
         socket = self.zmq_context.socket(zmq.REP)
         socket.bind("tcp://*:5555") # TODO: parameterize ipaddr and port
@@ -1301,8 +1149,6 @@ class Server:
             except zmq.ZMQError, z:
                 if str(z) == "Context was terminated": # TODO: brittle
                     break
-            #counter.incr()
-            #start = time.clock()
             now = time.time()
             execstart = time.clock()
             self.do_expiry(now)
@@ -1313,27 +1159,17 @@ class Server:
             COMMITLIST.__imul__(0) # NOTE: reqd because this is defined in another module, TODO: this is slower than COMMITLIST = []
             ROLLBACKLIST.__imul__(0) # NOTE: ditto above
             try:
-                #result = ujson_dumps(eval(command)) # TODO: make safe by controlling locals/globals
                 result = eval(command, EVAL_GLOBALS, EVAL_LOCALS)
                 result = ujson.dumps({"res":result, "cps": 1. / (time.clock() - execstart)})
-
-                #result = ujson.dumps(eval('get("foo")'))
-                #result = ujson.dumps(get("foo"))
-                #result = '"foo"'
-                #xform = XFORM_JSON.get(type(res))
-                #if xform:
-                #    res = xform(res)
-                #cooked = XFORM_JSON.get(type(raw), IDENTITY)(raw)
-                #print "cooked: %s (%s)" % (cooked, type(cooked))
-                #result = {"res" : res}
             except Exception, e:
-                #errbuff.truncate()
-                print "START ROLLBACK:" # TODO:
-                for item in reversed(ROLLBACKLIST):
-                    print item
-                    func, args = item
-                    func(*args)
-                print "END ROLLBACK:" # TODO:
+                # TODO: handle error during rollback--panic
+                if ROLLBACKLIST:
+                    print "START ROLLBACK:" # TODO:
+                    for item in reversed(ROLLBACKLIST):
+                        print item
+                        func, args = item
+                        func(*args)
+                    print "END ROLLBACK:" # TODO:
                 traceback.print_exc()
                 result = ujson_dumps({"err" : "%s: %s" % (e.__class__.__name__, str(e)), "cps": 1. / (time.clock() - execstart)})
             else:
@@ -1341,7 +1177,6 @@ class Server:
                     COMMITLIST.append((TXID, "", "COMMIT", "", "")) # TODO: get rid of all dotted qualifiers by rebinding
                     journal_queue.put(COMMITLIST)
             finally:
-                #finish = time.clock()
                 elapsed = now - start
                 if elapsed > 2: # TODO: parameterize
                     print "%.2f req/sec" % (reqs/elapsed)

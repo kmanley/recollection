@@ -78,10 +78,14 @@ class wrappedlist(list):
         # NOTE: we could implement but shorthand syntax isn't supported in eval(...) anyway
         raise NotImplementedError("please use put(key, get(key) * other) instead")
 
-    def __setitem__(self, *args, **kwargs):
-        # TODO: consider implementing this so that e.g. random.shuffle(get('x')) works...
-        # but make sure that self[i] is not a wrapped type, else we could lose a journal entry
-        raise NotImplementedError("please use put(key, index0, ...indexN, obj) instead")
+    # TODO: consider implementing this so that e.g. random.shuffle(get('x')) works...
+    def __setitem__(self, index, val):
+        val = _wrap(val)
+        key = _key_from_obj(self)
+        prev = self[index]
+        list.__setitem__(self, index, val)
+        ROLLBACKLIST_APPEND((self.__setitem__, (index, prev)))
+        COMMITLIST_APPEND((TXID, key, "SETITEM", index, serialize(val)))
 
     def append(self, val):
         val = _wrap(val)

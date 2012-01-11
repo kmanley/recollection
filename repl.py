@@ -9,7 +9,7 @@ socket.connect ("tcp://127.0.0.1:5555") # TODO: parameterize hostname/port
 
 while True:
     try:
-        cmd = raw_input("> ").strip()
+        cmd = raw_input(">>> ").strip()
         if cmd.lower() == "quit":
             break
         if not cmd:
