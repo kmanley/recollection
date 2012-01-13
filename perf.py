@@ -19,17 +19,18 @@ class XPerSec:
 
 ctr = XPerSec("reqs")
 c = recolcli.Client("127.0.0.1", 5555)
-for i in range(ITERS):
+for i in range(1, ITERS):
     if i % 1000 == 0:
       print "%d of %d" % (i, ITERS)
-    if random.randrange(100) > 50:
-        if random.randrange(100) > 1000: # < 10:
-            expiry = time.time() + 2
-            c.query("put('%s', %s, expiry=%s)" % (i, i, expiry))
-        else:
-            c.query("put('%s', %s)" % (i, i))
-    else:
-        c.query("get('%s')" % i)
+    c.query("put('%s', %s)" % (i, i))
+    #if random.randrange(100) > 50:
+    #    if random.randrange(100) > 1000: # < 10:
+    #        expiry = time.time() + 2
+    #        c.query("put('%s', %s, expiry=%s)" % (i, i, expiry))
+    #    else:
+    #        c.query("put('%s', %s)" % (i, i))
+    #else:
+    #    c.query("get('%s')" % i)
     #if i % 100 == 0:
     #    expiry = time.time() + 2
     #    c.query("put('%s', %s, expiry=%s)" % (i, i, expiry))

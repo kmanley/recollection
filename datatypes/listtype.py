@@ -1,8 +1,11 @@
 #reallist = list
 
-from globals import _wrap, _key_from_obj, TXID, COMMITLIST, ROLLBACKLIST, serialize
-COMMITLIST_APPEND = COMMITLIST.append
-ROLLBACKLIST_APPEND = ROLLBACKLIST.append
+import globals
+from globals import _wrap, _key_from_obj, serialize
+
+#TXID, COMMITLIST, ROLLBACKLIST,
+#COMMITLIST_APPEND = COMMITLIST.append
+#ROLLBACKLIST_APPEND = ROLLBACKLIST.append
 #_wrap = None
 #_key_from_obj = None
 #COMMITLIST = None
@@ -80,12 +83,12 @@ class wrappedlist(list):
 
     # TODO: consider implementing this so that e.g. random.shuffle(get('x')) works...
     def __setitem__(self, index, val):
-        val = _wrap(val)
+        val = _wrap(val) # TODO: I assume the call to global function is cheaper than call to mixn
         key = _key_from_obj(self)
         prev = self[index]
         list.__setitem__(self, index, val)
         ROLLBACKLIST_APPEND((self.__setitem__, (index, prev)))
-        COMMITLIST_APPEND((TXID, key, "SETITEM", index, serialize(val)))
+        globals.COMMITLIST.append((globals.TXID, key, "SETITEM", index, serialize(val)))
 
     def append(self, val):
         val = _wrap(val)
@@ -97,7 +100,8 @@ class wrappedlist(list):
         # much that we want rollbacks to be fast, it's that we want the happy path to be fast, and deep copies are
         # expensive.
         ROLLBACKLIST_APPEND((self.pop, ()))
-        COMMITLIST_APPEND((TXID, key, "APPEND", "", serialize(val))) # TODO: get rid of all dotted qualifiers by rebinding
+        # NOTE: this is APPENDR because we will also need APPENDL, e.g. for deque
+        COMMITLIST_APPEND((globals.TXID, key, "APPENDR", "", serialize(val))) # TODO: get rid of all dotted qualifiers by rebinding
 
     def extend(self, val):
         val = _wrap(val)
@@ -106,14 +110,15 @@ class wrappedlist(list):
         list.extend(self, val)
         val_len = len(self) - prev_len # we do it this way because val could be an iterator
         ROLLBACKLIST_APPEND((lambda self : [self.pop() for i in range(val_len)], (self,)))
-        COMMITLIST_APPEND((TXID, key, "EXTEND", "", serialize(val)))
+        # NOTE: this is EXTENDR because we will also need EXTENDL, e.g. for deque
+        COMMITLIST_APPEND((globals.TXID, key, "EXTENDR", "", serialize(val)))
 
     def insert(self, index, val):
         val = _wrap(val)
         key = _key_from_obj(self) # IMPORTANT: must come before superclass call
         list.insert(self, index, val)
         ROLLBACKLIST_APPEND((self.pop, (index,)))
-        COMMITLIST_APPEND((TXID, key, "INSERT", index, serialize(val)))
+        COMMITLIST_APPEND((globals.TXID, key, "INSERT", index, serialize(val)))
 
     def pop(self, index=None):
         key = _key_from_obj(self) # IMPORTANT: must come before superclass call
@@ -121,21 +126,22 @@ class wrappedlist(list):
             index = len(self) - 1
         val = list.pop(self, index) # TODO: what if this is a ref; do we need to do a copy? or deepcopy?
         ROLLBACKLIST_APPEND((self.insert, (index, val)))
-        COMMITLIST_APPEND((TXID, key, "POP", index, ""))
+        # NOTE: this POP pops an arbitrary index, we will also need POPR, POPL with no index for deque
+        COMMITLIST_APPEND((globals.TXID, key, "POP", index, ""))
         return val
 
     def reverse(self):
         key = _key_from_obj(self) # IMPORTANT: must come before superclass call
         list.reverse(self)
         ROLLBACKLIST_APPEND((self.reverse, ()))
-        COMMITLIST_APPEND((TXID, key, "REVERSE", "", ""))
+        COMMITLIST_APPEND((globals.TXID, key, "REVERSE", "", ""))
 
     def sort(self):
         key = _key_from_obj(self) # IMPORTANT: must come before superclass call
         prev = self[::] # NOTE: shallow copy
         list.sort(self)
         ROLLBACKLIST_APPEND((self._set, (prev,)))
-        COMMITLIST_APPEND((TXID, key, "SORT", "", ""))
+        COMMITLIST_APPEND((globals.TXID, key, "SORT", "", ""))
 
     def _copy(self):
         return self[::] # TODO: this is shallow copy, do we need deepcopy?

@@ -334,7 +334,7 @@ SortedSets : use blist.sortedset
 REDIS   <->     RECOL data types mapping
 ------------------------------------------------------------------------------------------------------------------------
 string          string
-list            list
+list            list or blist
 hash            dict
 set             set
 sortedset       ?? use sortedset?
@@ -359,6 +359,10 @@ Arbitrarily nested data structures, e.g. set('a', [1,2,[10,20,[100,200]]])
 Using Python syntax in queries: nested function calls, return tuples of many commands, listcomps, math functions etc.
 Works the same on every platform (win32 is a first class citizen)
 Uses standard JSON serialization; convenient for web apps; save JSON directly to db (internally it is stored as equivalent Python data)
+This means you can query the stored JSON (well, it's stored as Python) directly, which you can't do in REDIS:
+    # Store other data as serialized JSON object, but we won't be able to query the value itself
+    2 SET "people:francois" "{'name': 'Francois Beausoleil', 'email': 'francois@teksol.info', 'year-of-birth': 1973, 'tags': ['friendly', 'ruby', 'coder', 'father']}"
+
 Control synchronisation via explicit ssync(), hsync() commands
 Fewer server roundtrips, e.g. put('key', {"foo":"bar", "baz":"bip}) vs. hset("key", "foo", "bar" then hset "key" "baz" "bip"
 Slicing
@@ -367,8 +371,6 @@ I can make it run in either embeddable or server mode (TODO: think about API whe
 
 RECOL antipatterns
 -------------------------
-
-
 """
 
 
@@ -426,7 +428,8 @@ LARGEST_LEXICAL_CHAR = '\xff'
 journal_queue = Queue.Queue()
 
 # TODO: implement __slots__
-# TODO rename to ranklist?
+# TODO rename to ranklist? or index? as this can be used for indexes too
+# TODO: if it's going to be used as an index, then we shouldn't limit "score" to be an int, it should be any comparable thing
 class scoreboard(object):
     def __init__(self, it=()): # it is iterable of (score, member)
         self._set = blist.sortedset(it)  # set of (score, member), ...
@@ -513,6 +516,7 @@ class scoreboard(object):
 class JournalWriterThread(threading.Thread):
     def __init__(self):
         threading.Thread.__init__(self)
+        self.ctr = 0
 
     def process_tx(self, tx):
         #print("processing journal item %s" % item)
@@ -520,7 +524,7 @@ class JournalWriterThread(threading.Thread):
         #self.curs.execute("insert into journal values(null, '%s')" % item)
         # TODO: need to batch these to improve performance
         #self.journal.write("insert into journal values(null, '%s')\n" % item)
-        msg = "".join(["%d:%s:%s:%s:%s\n" % (txid, repr(key), cmd, args, val) for txid, key, cmd, args, val in tx])
+        msg = "".join(["%d:%s:%s:%s:%s\r\n" % (txid, repr(key), cmd, args, val) for txid, key, cmd, args, val in tx])
         #print("begin write journal")
         #print msg[:-1]
         #for item in tx:
@@ -544,15 +548,17 @@ class JournalWriterThread(threading.Thread):
         log.info("journal writer thread starting...") 
         try:
             while True:
+                qsize = journal_queue.qsize()
+                log.info("QSIZE %s" % qsize) # TODO:
+                if (qsize >= QSIZE_WARNING_LIMIT) and (time.time() - last_warning_time > 5):
+                    log.warning("db queue size: %d" % qsize)
+                    last_warning_time = time.time()
                 try:
-                    qsize = journal_queue.qsize()
-                    if (qsize >= QSIZE_WARNING_LIMIT) and (time.time() - last_warning_time > 5):
-                        log.warning("db queue size: %d" % qsize)
-                        last_warning_time = time.time()
                     tx = journal_queue.get(True, 2.0)
                 except Queue.Empty:
-                    pass
+                    time.sleep(0.001)
                 else:
+                    log.info("POP %s" % (repr(tx),)) # TODO:
                     # TODO: make sure no real data can be in queue after the quit sentinel
                     if tx == QUITSENTINEL:
                         log.info("journal writer thread got exit sentinel")
@@ -621,17 +627,16 @@ class XPerSec:
         now = time.clock()
         elapsed = now - self.start
         if elapsed > 1.0:
-            print "%.2f %s/sec" % (self.count/elapsed, self.things)
+            log.info("%.2f %s/sec" % (self.count/elapsed, self.things)) # TODO: logging
             self.count = 1
             self.start = now
         else:
             self.count += 1
 
-import globals
-from globals import _wrap, OBJMAP, TXID, COMMITLIST, ROLLBACKLIST, serialize, deserialize
-#TXID = 0
+
+from globals import _wrap, serialize, deserialize
+globals.TXID = 0
 D = {}
-#OBJMAP = {}
 VARS = {}
 TEMPVAR = "_"
 TEMPVAR0= "_0"
@@ -743,7 +748,7 @@ def _get(key, *idxs, **kwargs):
     for idx in idxs:
         obj = obj[idx]
     #obj = WRAPPERS[type(obj)](obj)
-    OBJMAP[id(obj)] = (key,) + idxs
+    globals.OBJMAP[id(obj)] = (key,) + idxs
     return obj
 
 def page(data, pagenum, pagesize=50):
@@ -853,7 +858,7 @@ def _put(key, *args, **kwargs):
         obj = D[key]
         for idx in idxs[:-1]:
             obj = obj[idx]
-        OBJMAP[id(obj)] = (key,) + idxs
+        globals.OBJMAP[id(obj)] = (key,) + idxs
         prev = obj[idxs[-1]]
         obj[idxs[-1]] = val
     else:
@@ -875,8 +880,8 @@ def _put(key, *args, **kwargs):
 def put(key, *args, **kwargs):
     fullkey, prev, val = _put(key, *args, **kwargs)
     # TODO: if item didn't exist before, then rollback should indicate to DEL the key, not set to None!
-    ROLLBACKLIST.append((_put, fullkey + (prev,))) # TODO: what about rolling back key that had expiry?
-    COMMITLIST.append((TXID, fullkey, "SET", "", serialize(val))) # # TODO: get rid of all dotted qualifiers by rebinding
+    globals.ROLLBACKLIST.append((_put, fullkey + (prev,))) # TODO: what about rolling back key that had expiry?
+    globals.COMMITLIST.append((globals.TXID, fullkey, "PUT", "", serialize(val))) # # TODO: get rid of all dotted qualifiers by rebinding
 
 def incr(key, *args, **kwargs):
     value = get(key, *args, **kwargs) + kwargs.get("by",1)
@@ -1057,32 +1062,33 @@ class Server:
         Return True if we handled the event, False to continue
         passing event to upstream handlers
         """
-        print ("console event %s (%s)" % (CONSOLE_EVENTS.get(event, "UNKNOWN"), event))
+        log.info("console event %s (%s)" % (CONSOLE_EVENTS.get(event, "UNKNOWN"), event))
         self.exit_requested = True
         self.zmq_context.term()
         return True
 
     def get_last_txid(self):
-        global TXID
-        print "searching %s for latest txid" % JOURNALFILE
+        # TODO: need to think about finding the last COMMITTED tx. What if log is corrupted? What if we find
+        # an uncommitted tx?
+        log.info("searching %s for latest txid" % JOURNALFILE)
         try:
             fp = open(JOURNALFILE, "rb")
         except IOError, e:
-            print str(e)
-            TXID = 0
+            log.warning(str(e))
+            globals.TXID = 0
         else:
             try:
                 try:
                     line = tailer.tail(fp, 1)[0]
                 except IndexError:
-                    TXID = 0
+                    globals.TXID = 0
                 else:
                     parts = line.split(":")
-                    TXID = long(parts[0])
+                    globals.TXID = long(parts[0])
             finally:
                 fp.close()
         finally:
-            print "last txid was %s" % TXID
+            log.info("last txid was %s" % globals.TXID)
 
     def load_from_db(self):
         self.db = sqlite3.connect("recollection.dat") # TODO:
@@ -1104,7 +1110,7 @@ class Server:
                 # TODO:
                 raise NotImplementedError()
             #print row
-        print "loaded %d rows in %.2f secs" % (rows, time.time()-start)
+        log.info("loaded %d rows in %.2f secs" % (rows, time.time()-start))
 
     def do_expiry(self, now=None):
         if not now:
@@ -1152,34 +1158,37 @@ class Server:
             now = time.time()
             execstart = time.clock()
             self.do_expiry(now)
-            global VARS, OBJMAP, COMMITLIST, ROLLBACKLIST, TXID
-            TXID += 1
+            global VARS
+            globals.TXID += 1
             VARS = {}
-            OBJMAP.clear() # = {} # TODO: what's faster, d.clear() or d={}?
-            COMMITLIST.__imul__(0) # NOTE: reqd because this is defined in another module, TODO: this is slower than COMMITLIST = []
-            ROLLBACKLIST.__imul__(0) # NOTE: ditto above
+            globals.OBJMAP = {}
+            globals.COMMITLIST = []
+            GLOBALS_COMMITLIST = globals.COMMITLIST # bound to local for performance
+            globals.ROLLBACKLIST = []
+            GLOBALS_ROLLBACKLIST = globals.ROLLBACKLIST # bound to local for performance
             try:
                 result = eval(command, EVAL_GLOBALS, EVAL_LOCALS)
                 result = ujson.dumps({"res":result, "cps": 1. / (time.clock() - execstart)})
             except Exception, e:
                 # TODO: handle error during rollback--panic
-                if ROLLBACKLIST:
-                    print "START ROLLBACK:" # TODO:
-                    for item in reversed(ROLLBACKLIST):
-                        print item
+                if GLOBALS_ROLLBACKLIST:
+                    log.info("START ROLLBACK:") # TODO:
+                    for item in reversed(GLOBALS_ROLLBACKLIST):
+                        log.info(item)
                         func, args = item
                         func(*args)
-                    print "END ROLLBACK:" # TODO:
+                    log.info("END ROLLBACK:") # TODO:
                 traceback.print_exc()
                 result = ujson_dumps({"err" : "%s: %s" % (e.__class__.__name__, str(e)), "cps": 1. / (time.clock() - execstart)})
             else:
-                if COMMITLIST:
-                    COMMITLIST.append((TXID, "", "COMMIT", "", "")) # TODO: get rid of all dotted qualifiers by rebinding
-                    journal_queue.put(COMMITLIST)
+                if GLOBALS_COMMITLIST:
+                    GLOBALS_COMMITLIST.append((globals.TXID, "", "COMMIT", "", "")) # TODO: get rid of all dotted qualifiers by rebinding
+                    log.info("PUSH %s" % repr(GLOBALS_COMMITLIST)) # TODO:
+                    journal_queue.put(GLOBALS_COMMITLIST)
             finally:
                 elapsed = now - start
                 if elapsed > 2: # TODO: parameterize
-                    print "%.2f req/sec" % (reqs/elapsed)
+                    log.info("%.2f req/sec" % (reqs/elapsed))
                     reqs = 0
                     start = now
                 else:
@@ -1209,7 +1218,7 @@ class Server:
         journal_queue.put(QUITSENTINEL)            
         log.info("waiting for journal writer thread to catch up")
         self.journal_writer_thread.join()
-        print "did %d writes, verify journal contains same number!" % debug_writes
+        log.info("did %d writes, verify journal contains same number!" % debug_writes) # TODO: remove
 
 def main():
     #gc.disable() # TODO:?
