@@ -3,8 +3,11 @@ from types import ListType
 IDENTITY = lambda x : x
 COPY = lambda o : o._copy()
 
+wrappedlist = None # NOTE: replaced when listtype is loaded
+
 def _wrap_list(o):
     newobj = wrappedlist()
+    # TODO: listcomp faster?
     for item in o:
         newobj._append(_wrap(item))
     return newobj

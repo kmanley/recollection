@@ -542,23 +542,23 @@ class JournalWriterThread(threading.Thread):
         self.journal = open(JOURNALFILE, "ab") # TODO: location
         self.BATCH_SIZE = 1000
         self.ctr = 0
-        QSIZE_WARNING_LIMIT = 200
+        QSIZE_WARNING_LIMIT = 200 # TODO: get from config
         last_warning_time = time.time() 
         #log.info("controller dbthread starting...")
         log.info("journal writer thread starting...") 
         try:
             while True:
                 qsize = journal_queue.qsize()
-                log.info("QSIZE %s" % qsize) # TODO:
+                #log.info("QSIZE %s" % qsize) # TODO:
                 if (qsize >= QSIZE_WARNING_LIMIT) and (time.time() - last_warning_time > 5):
                     log.warning("db queue size: %d" % qsize)
                     last_warning_time = time.time()
                 try:
-                    tx = journal_queue.get(True, 2.0)
+                    tx = journal_queue.get(True, 2.0) # TODO: make wait time configurable
                 except Queue.Empty:
                     time.sleep(0.001)
                 else:
-                    log.info("POP %s" % (repr(tx),)) # TODO:
+                    log.debug("POP %s" % (repr(tx),)) # TODO:
                     # TODO: make sure no real data can be in queue after the quit sentinel
                     if tx == QUITSENTINEL:
                         log.info("journal writer thread got exit sentinel")
@@ -633,9 +633,24 @@ class XPerSec:
         else:
             self.count += 1
 
+from datatypes.wrap import _wrap
+import globals
 
-from globals import _wrap, serialize, deserialize
-globals.TXID = 0
+GLOBAL_OBJMAP = globals.OBJMAP
+GLOBAL_ROLLBACKLIST = globals.ROLLBACKLIST
+GLOBAL_COMMITLIST = globals.COMMITLIST
+COMMITLIST_APPEND = globals.COMMITLIST_APPEND
+ROLLBACKLIST_APPEND = globals.ROLLBACKLIST_APPEND
+
+GLOBAL_SET_TXID = globals.SET_TXID
+GLOBAL_GET_TXID = globals.GET_TXID
+GLOBAL_INCR_TXID = globals.INCR_TXID
+
+GLOBAL_SET_TXID(0)
+
+#from globals import serialize, deserialize
+#globals.TXID = 0
+
 D = {}
 VARS = {}
 TEMPVAR = "_"
@@ -750,6 +765,34 @@ def _get(key, *idxs, **kwargs):
     #obj = WRAPPERS[type(obj)](obj)
     globals.OBJMAP[id(obj)] = (key,) + idxs
     return obj
+
+"""
+TODO: think about ways we can automatically index objects
+
+e.g. if object {"name" : "Kevin", "age" : 30, "city" : "Seattle"}
+
+is at key /people/1
+
+then have some operation, e.g. index("/people/1") that creates indexes for all attributes
+TODO: would be good to also be able to index all people, but this would require searching keysubstrings.
+
+I suppose we could have a convention where at the top level the key must point to a collection of objects, not just one, e.g.
+at key "people" we have
+
+[ {"id":100, "name":"Bill", "age":20, "city":"Seattle"},
+  {"id":200, "name":"John", "age":25, "city":"New York"},
+  {"id":300, "name":"Bob",  "age":20,  "city":"Seattle"}]
+
+(may need to have a convention where there's an ID attribute that is unique)
+
+then we can index("people") and this will create:
+
+at key _index:people:     name:  {"Bill":0}, {"John":1}
+at key _index:people:age:   {20:0}, {
+
+TODO: be able to pass lambdas to the indexer to refine how each attribute is indexed
+
+"""
 
 def page(data, pagenum, pagesize=50):
     """
@@ -880,8 +923,8 @@ def _put(key, *args, **kwargs):
 def put(key, *args, **kwargs):
     fullkey, prev, val = _put(key, *args, **kwargs)
     # TODO: if item didn't exist before, then rollback should indicate to DEL the key, not set to None!
-    globals.ROLLBACKLIST.append((_put, fullkey + (prev,))) # TODO: what about rolling back key that had expiry?
-    globals.COMMITLIST.append((globals.TXID, fullkey, "PUT", "", serialize(val))) # # TODO: get rid of all dotted qualifiers by rebinding
+    ROLLBACKLIST_APPEND(_put, *(fullkey + (prev,))) # TODO: what about rolling back key that had expiry?
+    COMMITLIST_APPEND(fullkey, "PUT", None, val) # TODO: get rid of all dotted qualifiers by rebinding
 
 def incr(key, *args, **kwargs):
     value = get(key, *args, **kwargs) + kwargs.get("by",1)
@@ -890,7 +933,7 @@ def incr(key, *args, **kwargs):
 
 def info():
     # TODO: other useful info
-    return {"num_keys" : len(D), }
+    return {"num_keys" : len(D)}
 
 def decr(key, *args, **kwargs):
     kwargs["by"] = -kwargs.get("by", 1)
@@ -1039,6 +1082,7 @@ EVAL_LOCALS = { "datetime":datetime, # TODO: what's the difference having this i
                 "exists" : exists,
                 "get" : get,
                 "incr" : incr,
+                "info" : info,
                 "j2p" : j2p,
                 "kind" : kind,
                 "length" : length,
@@ -1075,20 +1119,20 @@ class Server:
             fp = open(JOURNALFILE, "rb")
         except IOError, e:
             log.warning(str(e))
-            globals.TXID = 0
+            GLOBAL_SET_TXID(0)
         else:
             try:
                 try:
                     line = tailer.tail(fp, 1)[0]
                 except IndexError:
-                    globals.TXID = 0
+                    GLOBAL_SET_TXID(0)
                 else:
                     parts = line.split(":")
-                    globals.TXID = long(parts[0])
+                    GLOBAL_SET_TXID(long(parts[0]))
             finally:
                 fp.close()
         finally:
-            log.info("last txid was %s" % globals.TXID)
+            log.info("last txid was %s" % GLOBAL_GET_TXID())
 
     def load_from_db(self):
         self.db = sqlite3.connect("recollection.dat") # TODO:
@@ -1159,21 +1203,19 @@ class Server:
             execstart = time.clock()
             self.do_expiry(now)
             global VARS
-            globals.TXID += 1
+            GLOBAL_INCR_TXID()
             VARS = {}
-            globals.OBJMAP = {}
-            globals.COMMITLIST = []
-            GLOBALS_COMMITLIST = globals.COMMITLIST # bound to local for performance
-            globals.ROLLBACKLIST = []
-            GLOBALS_ROLLBACKLIST = globals.ROLLBACKLIST # bound to local for performance
+            GLOBAL_OBJMAP.clear()
+            GLOBAL_COMMITLIST.__imul__(0) # this is the only way I found to clear a list in place
+            GLOBAL_ROLLBACKLIST.__imul__(0)
             try:
                 result = eval(command, EVAL_GLOBALS, EVAL_LOCALS)
                 result = ujson.dumps({"res":result, "cps": 1. / (time.clock() - execstart)})
             except Exception, e:
                 # TODO: handle error during rollback--panic
-                if GLOBALS_ROLLBACKLIST:
+                if GLOBAL_ROLLBACKLIST:
                     log.info("START ROLLBACK:") # TODO:
-                    for item in reversed(GLOBALS_ROLLBACKLIST):
+                    for item in reversed(GLOBAL_ROLLBACKLIST):
                         log.info(item)
                         func, args = item
                         func(*args)
@@ -1181,10 +1223,10 @@ class Server:
                 traceback.print_exc()
                 result = ujson_dumps({"err" : "%s: %s" % (e.__class__.__name__, str(e)), "cps": 1. / (time.clock() - execstart)})
             else:
-                if GLOBALS_COMMITLIST:
-                    GLOBALS_COMMITLIST.append((globals.TXID, "", "COMMIT", "", "")) # TODO: get rid of all dotted qualifiers by rebinding
-                    log.info("PUSH %s" % repr(GLOBALS_COMMITLIST)) # TODO:
-                    journal_queue.put(GLOBALS_COMMITLIST)
+                if GLOBAL_COMMITLIST:
+                    COMMITLIST_APPEND("", "COMMIT")
+                    log.debug("PUSH %s" % repr(GLOBAL_COMMITLIST)) # TODO:
+                    journal_queue.put(GLOBAL_COMMITLIST[::]) # TODO: NOTE: shallow copy; is that right?
             finally:
                 elapsed = now - start
                 if elapsed > 2: # TODO: parameterize
