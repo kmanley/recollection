@@ -8,56 +8,57 @@ _key_from_obj = globals._key_from_obj
 COMMITLIST_APPEND = globals.COMMITLIST_APPEND
 ROLLBACKLIST_APPEND = globals.ROLLBACKLIST_APPEND
 
+#TODO: the special methods can be called directly! So we either need to override __delitem__, etc.
+#  to do journaling or raise NotImplemented
+
+# '__add__' - ok, returns a new list
+# '__class__' - ok, idempotent
+# '__contains__', - ok, idempotent
+# *'__delattr__', - TODO: wtf?
+# *'__delitem__', - ok, overridden
+# *'__delslice__', ok, overridden
+# '__doc__', ok, idempotent
+# '__eq__', ok, idempotent
+# '__format__', ok, idempotent
+# '__ge__', ok, idempotent
+# '__getattribute__', ok, idempotent
+# '__getitem__', ok, idempotent
+# '__getslice__', ok, idempotent
+# '__gt__', ok, idempotent
+# '__hash__', ok, idempotent
+# *'__iadd__', ok, overridden
+# *'__imul__', ok, overridden
+# '__init__', ok, creates a new obj
+# '__iter__', ok, idempotent
+# '__le__', ok, idempotent
+# '__len__', ok, idempotent
+# '__lt__', ok, idempotent
+# '__mul__', ok, creates new obj
+# '__ne__', ok, idempotent
+# '__new__', ok, creates new obj
+# '__reduce__', ok, used by pickle
+# '__reduce_ex__', ok, used by pickle
+# '__repr__', ok, idempotent
+# '__reversed__', ok, idempotent
+# '__rmul__',  ok, idempotent
+# '__setattr__', ?
+# *'__setitem__', ok, wrapped
+# *'__setslice__', ok, wrapped
+# '__sizeof__', ok, idempotent
+# '__str__', ok, idempotent
+# '__subclasshook__', ok, idempotent
+# 'append', OK--wrapped
+# 'count', ok, idempotent
+# 'extend', OK--wrapped:
+# 'index', ok, idempotent
+# 'insert', OK--wrapped
+# 'pop', OK--wrappped
+# 'remove', TODO:
+# 'reverse', OK-wrapped
+# 'sort' TODO:
+
+#reallist = list
 class wrappedlist(list):
-    #TODO: the special methods can be called directly! So we either need to override __delitem__, etc.
-    #  to do journaling or raise NotImplemented
-    """
-     '__add__' - ok, returns a new list
-     '__class__' - ok, idempotent
-     '__contains__', - ok, idempotent
-     *'__delattr__', - TODO: wtf?
-     *'__delitem__', - ok, overridden
-     *'__delslice__', ok, overridden
-     '__doc__', ok, idempotent
-     '__eq__', ok, idempotent
-     '__format__', ok, idempotent
-     '__ge__', ok, idempotent
-     '__getattribute__', ok, idempotent
-     '__getitem__', ok, idempotent
-     '__getslice__', ok, idempotent
-     '__gt__', ok, idempotent
-     '__hash__', ok, idempotent
-     *'__iadd__', ok, overridden
-     *'__imul__', ok, overridden
-     '__init__', ok, creates a new obj
-     '__iter__', ok, idempotent
-     '__le__', ok, idempotent
-     '__len__', ok, idempotent
-     '__lt__', ok, idempotent
-     '__mul__', ok, creates new obj
-     '__ne__', ok, idempotent
-     '__new__', ok, creates new obj
-     '__reduce__', ok, used by pickle
-     '__reduce_ex__', ok, used by pickle
-     '__repr__', ok, idempotent
-     '__reversed__', ok, idempotent
-     '__rmul__',  ok, idempotent
-     '__setattr__', ?
-     *'__setitem__', ok, wrapped
-     *'__setslice__', ok, wrapped
-     '__sizeof__', ok, idempotent
-     '__str__', ok, idempotent
-     '__subclasshook__', ok, idempotent
-     'append', OK--wrapped
-     'count', ok, idempotent
-     'extend', OK--wrapped:
-     'index', ok, idempotent
-     'insert', OK--wrapped
-     'pop', OK--wrappped
-     'remove', TODO:
-     'reverse', OK-wrapped
-     'sort' TODO:
-    """
     def __delitem__(self, *args, **kwargs):
         # No point in implementing, it's the same as pop()
         raise NotImplementedError("please use list.pop(index) instead")
@@ -78,7 +79,6 @@ class wrappedlist(list):
         # NOTE: we could implement but shorthand syntax isn't supported in eval(...) anyway
         raise NotImplementedError("please use put(key, get(key) * other) instead")
 
-    # TODO: consider implementing this so that e.g. random.shuffle(get('x')) works...
     def __setitem__(self, index, val):
         val = _wrap(val) # TODO: I assume the call to global function is cheaper than call to mixin
         key = _key_from_obj(self) # NOTE: must come before mutating superclass call; as this could raise an exception
@@ -128,6 +128,19 @@ class wrappedlist(list):
         return val
 
     def reverse(self):
+        """
+        Reverses the items of the list in place
+
+        Algorithmic complexity: **O(n)** where n is the size of the list
+
+        Journal output: <TXID>:<KEYPATH>:**REVERSE**\:\:
+
+        Example::
+
+            put('x', [1, 2, 3])
+            get('x').reverse()
+            get('x') # returns [3, 2, 1]
+        """
         key = _key_from_obj(self) # NOTE: must come before mutating superclass call; as this could raise an exception
         list.reverse(self)
         ROLLBACKLIST_APPEND(self.reverse)
@@ -149,6 +162,8 @@ class wrappedlist(list):
     def _append(self, val):
         list.append(self, val)
 
+#wrappedlist = list
+#list = reallist
 #list = wrappedlist
 
 #import globals

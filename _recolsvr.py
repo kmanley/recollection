@@ -1,4 +1,7 @@
 """
+Linux TODO: use time.time() instead of time.clock()
+watch out for divide by zero error
+
 # TODO: using logging instead of print
 
 TODO: disallow storing embedded references, e.g.
@@ -387,7 +390,15 @@ import gc
 #from blist import sortedset
 from collections import deque
 #from Bio.trie import trie
-import win32api # TODO:
+import platform
+PLATFORM = platform.system().lower()
+WINDOWS = False
+LINUX = False
+if PLATFORM == "windows":
+    WINDOWS = True
+    import win32api # TODO:
+elif PLATFORM == "linux":
+    LINUX = True
 # NOTE: DO NOT IMPORT PYTHONCOM, there is a weird interaction with zmq that kills performance, see
 # https://github.com/zeromq/pyzmq/issues/163
 #import pythoncom # TODO: just for CreateGuid--need a better solution that is cross-platform
@@ -932,8 +943,9 @@ def incr(key, *args, **kwargs):
     return value
 
 def info():
-    # TODO: other useful info
-    return {"num_keys" : len(D)}
+    # TODO: uptime, txid, journal queue length, other useful info
+    return {"pid" : os.getpid(),
+            "num_keys" : len(D)}
 
 def decr(key, *args, **kwargs):
     kwargs["by"] = -kwargs.get("by", 1)
@@ -1179,7 +1191,8 @@ class Server:
         log.info("pid: %s" % os.getpid())
 
         # TODO: windows specific
-        win32api.SetConsoleCtrlHandler(self.console_ctrl_handler, 1)
+        if WINDOWS:
+            win32api.SetConsoleCtrlHandler(self.console_ctrl_handler, 1)
 
         self.get_last_txid()
 
@@ -1210,7 +1223,8 @@ class Server:
             GLOBAL_ROLLBACKLIST.__imul__(0)
             try:
                 result = eval(command, EVAL_GLOBALS, EVAL_LOCALS)
-                result = ujson.dumps({"res":result, "cps": 1. / (time.clock() - execstart)})
+                elapsed = (time.clock() - execstart) or 0.0000000001 # TODO:
+                result = ujson.dumps({"res":result, "cps": 1. / elapsed})
             except Exception, e:
                 # TODO: handle error during rollback--panic
                 if GLOBAL_ROLLBACKLIST:

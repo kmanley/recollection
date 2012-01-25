@@ -13,7 +13,9 @@ Contents:
 
    intro
    tutorial
+   commands
    datatypes
+   datatypes-list
    persistence
 
 
