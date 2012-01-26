@@ -1,12 +1,12 @@
 import wrap
-import globals
+import globalvars
 
 _wrap = wrap._wrap
-_key_from_obj = globals._key_from_obj
+_key_from_obj = globalvars._key_from_obj
 
 # rebind for performance; see ../rebind_perf/test.py for example
-COMMITLIST_APPEND = globals.COMMITLIST_APPEND
-ROLLBACKLIST_APPEND = globals.ROLLBACKLIST_APPEND
+COMMITLIST_APPEND = globalvars.COMMITLIST_APPEND
+ROLLBACKLIST_APPEND = globalvars.ROLLBACKLIST_APPEND
 
 #TODO: the special methods can be called directly! So we either need to override __delitem__, etc.
 #  to do journaling or raise NotImplemented

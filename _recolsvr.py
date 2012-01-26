@@ -1,4 +1,13 @@
 """
+TODO:
+pyInstaller is cross-platform and very powerful, with many third-party packages (matplotlib, numpy, PyQT4, ...)
+specially supported "out of the box", support for eggs, code-signing on Windows (and a couple other Windows-only goodies,
+optional binary packing... the works!-) The one big issue: the last "released" version, 1.3, is ages-old -- you
+absolutely must install the SVN trunk version, svn co http://svn.pyinstaller.org/trunk pyinstaller (or the 1.4 pre-release,
+but I haven't tested that one). A fair summary of its capabilities as of 6 months ago is here (in English, despite the
+Italian URL;-).
+
+
 Linux TODO: use time.time() instead of time.clock()
 watch out for divide by zero error
 
@@ -345,7 +354,9 @@ bitset          bitarray
                 heap/priority queue
                 complex
                 decimal
-                datetime
+                datetime.date
+                datetime.time
+                datetime.datetime
                 deque
                 frozenset
                 scoreboard
@@ -645,17 +656,17 @@ class XPerSec:
             self.count += 1
 
 from datatypes.wrap import _wrap
-import globals
+import globalvars
 
-GLOBAL_OBJMAP = globals.OBJMAP
-GLOBAL_ROLLBACKLIST = globals.ROLLBACKLIST
-GLOBAL_COMMITLIST = globals.COMMITLIST
-COMMITLIST_APPEND = globals.COMMITLIST_APPEND
-ROLLBACKLIST_APPEND = globals.ROLLBACKLIST_APPEND
+GLOBAL_OBJMAP = globalvars.OBJMAP
+GLOBAL_ROLLBACKLIST = globalvars.ROLLBACKLIST
+GLOBAL_COMMITLIST = globalvars.COMMITLIST
+COMMITLIST_APPEND = globalvars.COMMITLIST_APPEND
+ROLLBACKLIST_APPEND = globalvars.ROLLBACKLIST_APPEND
 
-GLOBAL_SET_TXID = globals.SET_TXID
-GLOBAL_GET_TXID = globals.GET_TXID
-GLOBAL_INCR_TXID = globals.INCR_TXID
+GLOBAL_SET_TXID = globalvars.SET_TXID
+GLOBAL_GET_TXID = globalvars.GET_TXID
+GLOBAL_INCR_TXID = globalvars.INCR_TXID
 
 GLOBAL_SET_TXID(0)
 
@@ -681,7 +692,16 @@ TXD = {}
 
 debug_writes = 0
 
-#def help(o):
+class Preformatted(str):
+    pass
+
+def help(what=None):
+    global EVAL_LOCALS
+    if what==None:
+        return EVAL_LOCALS.keys()
+    else:
+        return Preformatted((getattr(what, "__doc__", None) or "No help available").strip())
+
     # TODO: pydoc is funky
     #io = StringIO.StringIO()
     #h = pydoc.Helper(output=io)
@@ -774,7 +794,7 @@ def _get(key, *idxs, **kwargs):
     for idx in idxs:
         obj = obj[idx]
     #obj = WRAPPERS[type(obj)](obj)
-    globals.OBJMAP[id(obj)] = (key,) + idxs
+    globalvars.OBJMAP[id(obj)] = (key,) + idxs
     return obj
 
 """
@@ -912,7 +932,7 @@ def _put(key, *args, **kwargs):
         obj = D[key]
         for idx in idxs[:-1]:
             obj = obj[idx]
-        globals.OBJMAP[id(obj)] = (key,) + idxs
+        globalvars.OBJMAP[id(obj)] = (key,) + idxs
         prev = obj[idxs[-1]]
         obj[idxs[-1]] = val
     else:
@@ -932,6 +952,9 @@ def _put(key, *args, **kwargs):
     return (key,)+idxs, prev, val
 
 def put(key, *args, **kwargs):
+    """
+    This is the docstring for put TODO:
+    """
     fullkey, prev, val = _put(key, *args, **kwargs)
     # TODO: if item didn't exist before, then rollback should indicate to DEL the key, not set to None!
     ROLLBACKLIST_APPEND(_put, *(fullkey + (prev,))) # TODO: what about rolling back key that had expiry?
@@ -981,106 +1004,111 @@ def var(name, value=NOTSET):
         return value
 
 def shutdown():
-    globals.SERVER.exit_requested = True
+    globalvars.SERVER.exit_requested = True
 
 from datatypes.listtype import wrappedlist
 
+ALLOWED_BUILTINS = {
+        'abs':abs,
+        'all':all,
+        'any':any,
+        #'apply':
+        'basestring':basestring,
+        'bin':bin,
+        'bool':bool,
+        #'buffer':buffer, # TODO: support this?
+        #'bytearray':bytearray, # TODO:support this?
+        'bytes':bytes,
+        'callable':callable,
+        'chr':chr,
+        #'classmethod':
+        'cmp':cmp,
+        'coerce':coerce,
+        #'compile':
+        'complex':complex,
+        #'copyright':
+        #'credits':
+        #'delattr':
+        #'dict':wrappeddict,
+        'dir':dir,
+        'divmod':divmod,
+        'enumerate':enumerate,
+        'False':False,
+        #'eval':
+        #'execfile':
+        #'exit':
+        #'file':
+        'filter':filter,
+        'float':float,
+        'format':format,
+        'frozenset':frozenset,
+        #'getattr':
+        #'globals':
+        'hasattr':hasattr,
+        'hash':hash,
+        #'help':help,
+        'hex':hex,
+        'id':id,
+        #'input':
+        'int':int,
+        'intern':intern,
+        'isinstance':isinstance,
+        'issubclass':issubclass,
+        'iter':iter,
+        'len':len,
+        #'license':
+        'list':wrappedlist,
+        #'locals':
+        'long':long,
+        'map':map,
+        'max':max,
+        #'memoryview':
+        'min':min,
+        'next':next,
+        'None':None,
+        #'object':
+        'oct':oct,
+        #'open':
+        'ord':ord,
+        'pow':pow,
+        #'print':
+        #'property':
+        #'quit':
+        'range':range,
+        #'raw_input':
+        'reduce':reduce,
+        #'reload':
+        'repr':repr,
+        'reversed':reversed,
+        'round':round,
+        'set':set,
+        #'setattr':
+        #'slice':
+        'sorted':sorted,
+        #'staticmethod':
+        'str':str,
+        'sum':sum,
+        #'super':
+        'True' : True,
+        'tuple':tuple,
+        'type':type,
+        'unichr':unichr,
+        'unicode':unicode,
+        #'vars':
+        'xrange':xrange,
+        'zip':zip
+    }
+
 # TODO: put back some globals e.g. id, abs, ...
 EVAL_GLOBALS = {
-    "__builtins__" : {
-                'abs':abs,
-                'all':all,
-                'any':any,
-                #'apply':
-                'basestring':basestring,
-                'bin':bin,
-                'bool':bool,
-                #'buffer':buffer, # TODO: support this?
-                #'bytearray':bytearray, # TODO:support this?
-                'bytes':bytes,
-                'callable':callable,
-                'chr':chr,
-                #'classmethod':
-                'cmp':cmp,
-                'coerce':coerce,
-                #'compile':
-                'complex':complex,
-                #'copyright':
-                #'credits':
-                #'delattr':
-                #'dict':wrappeddict,
-                'dir':dir,
-                'divmod':divmod,
-                'enumerate':enumerate,
-                'False':False,
-                #'eval':
-                #'execfile':
-                #'exit':
-                #'file':
-                'filter':filter,
-                'float':float,
-                'format':format,
-                'frozenset':frozenset,
-                #'getattr':
-                #'globals':
-                'hasattr':hasattr,
-                'hash':hash,
-                #'help':help,
-                'hex':hex,
-                'id':id,
-                #'input':
-                'int':int,
-                'intern':intern,
-                'isinstance':isinstance,
-                'issubclass':issubclass,
-                'iter':iter,
-                'len':len,
-                #'license':
-                'list':wrappedlist,
-                #'locals':
-                'long':long,
-                'map':map,
-                'max':max,
-                #'memoryview':
-                'min':min,
-                'next':next,
-                'None':None,
-                #'object':
-                'oct':oct,
-                #'open':
-                'ord':ord,
-                'pow':pow,
-                #'print':
-                #'property':
-                #'quit':
-                'range':range,
-                #'raw_input':
-                'reduce':reduce,
-                #'reload':
-                'repr':repr,
-                'reversed':reversed,
-                'round':round,
-                'set':set,
-                #'setattr':
-                #'slice':
-                'sorted':sorted,
-                #'staticmethod':
-                'str':str,
-                'sum':sum,
-                #'super':
-                'True' : True,
-                'tuple':tuple,
-                'type':type,
-                'unichr':unichr,
-                'unicode':unicode,
-                #'vars':
-                'xrange':xrange,
-                'zip':zip
-                }
+    "__builtins__" : ALLOWED_BUILTINS
     }
+
+
 #make a list of safe functions
-EVAL_LOCALS = { "datetime":datetime, # TODO: what's the difference having this in locals vs. globals?
-                "list" : list,
+EVAL_LOCALS = { # modules
+                "datetime":datetime, # TODO: what's the difference having this in locals vs. globals?
+                #"list" : list,
                 "math" : math,
                 "random" : random,
                 # commands
@@ -1093,6 +1121,7 @@ EVAL_LOCALS = { "datetime":datetime, # TODO: what's the difference having this i
                 "erase" : erase,
                 "exists" : exists,
                 "get" : get,
+                "help" : help,
                 "incr" : incr,
                 "info" : info,
                 "j2p" : j2p,
@@ -1187,7 +1216,7 @@ class Server:
                     break
 
     def run(self):
-        globals.SERVER = self
+        globalvars.SERVER = self
         log.info("pid: %s" % os.getpid())
 
         # TODO: windows specific
@@ -1224,7 +1253,10 @@ class Server:
             try:
                 result = eval(command, EVAL_GLOBALS, EVAL_LOCALS)
                 elapsed = (time.clock() - execstart) or 0.0000000001 # TODO:
-                result = ujson.dumps({"res":result, "cps": 1. / elapsed})
+                if type(result) == Preformatted:
+                    result = ujson.dumps(result)
+                else:
+                    result = ujson.dumps({"res":result, "cps": 1. / elapsed})
             except Exception, e:
                 # TODO: handle error during rollback--panic
                 if GLOBAL_ROLLBACKLIST:
