@@ -159,7 +159,7 @@ Notes:
 21 Dec - using a sqlite journal is way too slow; queue keeps growing
   Switching to disk based journal the queue only lagged behind around 300 rows even with 8K+ requests/sec
   Tried 5 clients each doing 100K sets, server was only using 40% CPU though CPU was pegged by the clients, got about 8K req/sec
-  
+
   Tried by running around 100 perf clients on Adrian's machine and actually saw nearly 20K req/sec on the server, and the
   server still only used about 90% cpu (I could still easily use the repl). but then I started seeing the journal queue backup, e.g. 
     WARNING:root:db queue size: 1420774
@@ -177,7 +177,7 @@ Notes:
     WARNING:root:db queue size: 1533165
     18360.65 requests/sec  
  TODO: need to write bigger blocks of data, not a single line at a time.
-  
+
 """
 
 """
@@ -773,7 +773,7 @@ def erase(key, index=None):
         except KeyError:
             pass
     # TODO: write to journal
-    
+
 def exists(key, *idxs):
     try:
         _get(key, *idxs) # NOT get(), as we don't want to trigger journal
@@ -973,7 +973,7 @@ def info():
 def decr(key, *args, **kwargs):
     kwargs["by"] = -kwargs.get("by", 1)
     return incr(key, *args, **kwargs)
-    
+
 def rename(oldkey, newkey):
     D[newkey] = D[oldkey]
     del D[oldkey]
@@ -1009,100 +1009,100 @@ def shutdown():
 from datatypes.listtype import wrappedlist
 
 ALLOWED_BUILTINS = {
-        'abs':abs,
-        'all':all,
-        'any':any,
-        #'apply':
-        'basestring':basestring,
-        'bin':bin,
-        'bool':bool,
-        #'buffer':buffer, # TODO: support this?
-        #'bytearray':bytearray, # TODO:support this?
-        'bytes':bytes,
-        'callable':callable,
-        'chr':chr,
-        #'classmethod':
-        'cmp':cmp,
-        'coerce':coerce,
-        #'compile':
-        'complex':complex,
-        #'copyright':
-        #'credits':
-        #'delattr':
-        #'dict':wrappeddict,
-        'dir':dir,
-        'divmod':divmod,
-        'enumerate':enumerate,
-        'False':False,
-        #'eval':
-        #'execfile':
-        #'exit':
-        #'file':
-        'filter':filter,
-        'float':float,
-        'format':format,
-        'frozenset':frozenset,
-        #'getattr':
-        #'globals':
-        'hasattr':hasattr,
-        'hash':hash,
-        #'help':help,
-        'hex':hex,
-        'id':id,
-        #'input':
-        'int':int,
-        'intern':intern,
-        'isinstance':isinstance,
-        'issubclass':issubclass,
-        'iter':iter,
-        'len':len,
-        #'license':
-        'list':wrappedlist,
-        #'locals':
-        'long':long,
-        'map':map,
-        'max':max,
-        #'memoryview':
-        'min':min,
-        'next':next,
-        'None':None,
-        #'object':
-        'oct':oct,
-        #'open':
-        'ord':ord,
-        'pow':pow,
-        #'print':
-        #'property':
-        #'quit':
-        'range':range,
-        #'raw_input':
-        'reduce':reduce,
-        #'reload':
-        'repr':repr,
-        'reversed':reversed,
-        'round':round,
-        'set':set,
-        #'setattr':
-        #'slice':
-        'sorted':sorted,
-        #'staticmethod':
-        'str':str,
-        'sum':sum,
-        #'super':
-        'True' : True,
-        'tuple':tuple,
-        'type':type,
-        'unichr':unichr,
-        'unicode':unicode,
-        #'vars':
-        'xrange':xrange,
-        'zip':zip
-    }
+    'abs':abs,
+    'all':all,
+    'any':any,
+    #'apply':
+    'basestring':basestring,
+    'bin':bin,
+    'bool':bool,
+    #'buffer':buffer, # TODO: support this?
+    #'bytearray':bytearray, # TODO:support this?
+    'bytes':bytes,
+    'callable':callable,
+    'chr':chr,
+    #'classmethod':
+    'cmp':cmp,
+    'coerce':coerce,
+    #'compile':
+    'complex':complex,
+    #'copyright':
+    #'credits':
+    #'delattr':
+    #'dict':wrappeddict,
+    'dir':dir,
+    'divmod':divmod,
+    'enumerate':enumerate,
+    'False':False,
+    #'eval':
+    #'execfile':
+    #'exit':
+    #'file':
+    'filter':filter,
+    'float':float,
+    'format':format,
+    'frozenset':frozenset,
+    #'getattr':
+    #'globals':
+    'hasattr':hasattr,
+    'hash':hash,
+    #'help':help,
+    'hex':hex,
+    'id':id,
+    #'input':
+    'int':int,
+    'intern':intern,
+    'isinstance':isinstance,
+    'issubclass':issubclass,
+    'iter':iter,
+    'len':len,
+    #'license':
+    'list':wrappedlist,
+    #'locals':
+    'long':long,
+    'map':map,
+    'max':max,
+    #'memoryview':
+    'min':min,
+    'next':next,
+    'None':None,
+    #'object':
+    'oct':oct,
+    #'open':
+    'ord':ord,
+    'pow':pow,
+    #'print':
+    #'property':
+    #'quit':
+    'range':range,
+    #'raw_input':
+    'reduce':reduce,
+    #'reload':
+    'repr':repr,
+    'reversed':reversed,
+    'round':round,
+    'set':set,
+    #'setattr':
+    #'slice':
+    'sorted':sorted,
+    #'staticmethod':
+    'str':str,
+    'sum':sum,
+    #'super':
+    'True' : True,
+    'tuple':tuple,
+    'type':type,
+    'unichr':unichr,
+    'unicode':unicode,
+    #'vars':
+    'xrange':xrange,
+    'zip':zip
+}
 
 # TODO: put back some globals e.g. id, abs, ...
 EVAL_GLOBALS = {
     "__builtins__" : ALLOWED_BUILTINS
-    }
+}
 
 
 #make a list of safe functions
@@ -1133,7 +1133,7 @@ EVAL_LOCALS = { # modules
                 "ping" : ping,
                 "put" : put,
                 "shutdown" : shutdown,
-              }
+                }
 
 class Server:
     def __init__(self):
@@ -1228,7 +1228,7 @@ class Server:
         self.load_from_db()
 
         self.journal_writer_thread.start()
-        
+
         socket = self.zmq_context.socket(zmq.REP)
         socket.bind("tcp://*:5555") # TODO: parameterize ipaddr and port
 
@@ -1314,7 +1314,7 @@ def main():
     server.run()
 
 def profile_main():
-	pass
+    pass
     # import hotshot, hotshot.stats
     # prof = hotshot.Profile("recolsvr.prof")
     # prof.runcall(main)
@@ -1324,5 +1324,4 @@ def profile_main():
     # stats.print_stats(50)
 
 if __name__ == "__main__":
-	main()
-
+    main()
