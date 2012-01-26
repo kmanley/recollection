@@ -5,6 +5,8 @@ from recoltest import RecolTester, start_server, wait_for_shutdown
 setup = start_server
 teardown = wait_for_shutdown
 
+# TODO: try crash(), ensure rollback works for each method
+
 class TestList(RecolTester):
     def test_put(self):
         self.query("put('x', range(5))")

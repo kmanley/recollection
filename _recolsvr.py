@@ -141,17 +141,16 @@ INFO:root:journal writer thread starting...
 # TODO: master-slave, see here: http://zguide.zeromq.org/page:all#header-100 the section "getting a snapshot"
 """
 create table master (key text not null,
-                     i0 text null,
-                     i1 text null,
-                     i2 text null,
-                     i3 text null,
-                     i4 text null,
-                     i5 text null,
-                     i6 text null,
-                     i7 text null,
-                     i8 text null,
-                     value text,
-                     primary key (key, i0, i1, i2, i3, i4, i5, i6, i7, i8));
+                     i0 text not null,
+                     i1 text not null,
+                     i2 text not null,
+                     i3 text not null,
+                     i4 text not null,
+                     i5 text not null,
+                     i6 text not null,
+                     i7 text not null,
+                     value text not null,
+                     primary key (key, i0, i1, i2, i3, i4, i5, i6, i7));
 CREATE TABLE lastwrite (txid int not null, seekpos int not null);
 insert into last values (0,0);
 
@@ -546,7 +545,7 @@ class JournalWriterThread(threading.Thread):
         #self.curs.execute("insert into journal values(null, '%s')" % item)
         # TODO: need to batch these to improve performance
         #self.journal.write("insert into journal values(null, '%s')\n" % item)
-        msg = "".join(["%d:%s:%s:%s:%s\r\n" % (txid, repr(key), cmd, args, val) for txid, key, cmd, args, val in tx])
+        msg = "".join(["%d:%s:%s:%s:%s\r\n" % (txid, repr(key), cmd, args, serialize(val._unwrapped())) for txid, key, cmd, args, val in tx])
         #print("begin write journal")
         #print msg[:-1]
         #for item in tx:
@@ -670,7 +669,7 @@ GLOBAL_INCR_TXID = globalvars.INCR_TXID
 
 GLOBAL_SET_TXID(0)
 
-#from globals import serialize, deserialize
+from globalvars import serialize, deserialize
 #globals.TXID = 0
 
 D = {}
@@ -924,6 +923,7 @@ def putnx(key, value):
     return D.setdefault(key, value)
 
 #from datatypes.wraptype import _wrap
+# TODO: raise exception if more than key + 8 subkeys, as this won't fit in current db schema
 def _put(key, *args, **kwargs):
     idxs = args[:-1]
     val = args[-1]
@@ -932,14 +932,14 @@ def _put(key, *args, **kwargs):
         obj = D[key]
         for idx in idxs[:-1]:
             obj = obj[idx]
-        globalvars.OBJMAP[id(obj)] = (key,) + idxs
+        globalvars.OBJMAP[id(obj)] = (key,) + idxs[:-1] # TODO: idxs[:-1] repeated, idxs[-1] repeated, could optimize
         prev = obj[idxs[-1]]
         obj[idxs[-1]] = val
     else:
         try:
             prev = D[key]
         except KeyError:
-            prev = None
+            prev = None # TODO: no, this should be some kind of sentintel (TOMBSTONE) that means to delete the item during rollback
         D[key] = val
     expiry = kwargs.get("expiry")
     if expiry:
@@ -949,16 +949,21 @@ def _put(key, *args, **kwargs):
         # then need to clear the expiry
     global debug_writes
     debug_writes += 1 # TODO:
-    return (key,)+idxs, prev, val
+    #return (key,)+idxs, prev, val
+    return prev, val
 
 def put(key, *args, **kwargs):
     """
     This is the docstring for put TODO:
     """
-    fullkey, prev, val = _put(key, *args, **kwargs)
-    # TODO: if item didn't exist before, then rollback should indicate to DEL the key, not set to None!
-    ROLLBACKLIST_APPEND(_put, *(fullkey + (prev,))) # TODO: what about rolling back key that had expiry?
-    COMMITLIST_APPEND(fullkey, "PUT", None, val) # TODO: get rid of all dotted qualifiers by rebinding
+    #fullkey, prev, val = _put(key, *args, **kwargs)
+    prev, val = _put(key, *args, **kwargs)
+    # NOTE: put only needs to add to commitlist/rollbacklist if we have subkeys, otherwise we rely on the 
+    # implementation of obj.__setitem__ to do it
+    if len(args) == 1:
+        # TODO: if prev==TOMBSTONE, then rollback should DEL the key, not set to TOMBSTONE
+        ROLLBACKLIST_APPEND(_put, *(key, prev)) # TODO: what about rolling back key that had expiry?
+        COMMITLIST_APPEND((key,), "PUT", None, val) 
 
 def incr(key, *args, **kwargs):
     value = get(key, *args, **kwargs) + kwargs.get("by",1)
@@ -1135,6 +1140,12 @@ EVAL_LOCALS = { # modules
                 "shutdown" : shutdown,
                 }
 
+def _tryint(i):
+    try:
+        return int(i)
+    except:
+        return i
+
 class Server:
     def __init__(self):
         self.D = {}
@@ -1179,21 +1190,41 @@ class Server:
         self.db = sqlite3.connect("recollection.dat") # TODO:
         self.curs = self.db.cursor()
         # TODO: rename cols i1-i8, we have 9 currently and only want 8
-        self.curs.execute("select * from master order by key, i0, i1, i2, i3, i4, i5, i6, i7, i8;")
+        self.curs.execute("select * from master order by key, i0, i1, i2, i3, i4, i5, i6, i7;")
         # TODO: need lazy iterator fetch here
         rows = 0
         start = time.time()
         for row in self.curs.fetchall():
             rows += 1
-            key, i0, i1, i2, i3, i4, i5, i6, i7, i8, val = row
-            if i0 == None:
-                D[key] = deserialize(val)
-            elif i1 == None:
-                # TODO: i0 is stored as string but if D[key] is a list we need this to be an int...
-                D[key][i0] = deserialize(val)
-            else:
-                # TODO:
-                raise NotImplementedError()
+            key, i0, i1, i2, i3, i4, i5, i6, i7, val = row
+            val = deserialize(val)
+            try:
+                # TODO: the following if/elif could probably be done more elegantly with a loop
+                #  actually, we only need one call to _put since _put can handle variable length subkeys
+                if i0 == "":
+                    _put(key, val)
+                elif i1 == "":
+                    # TODO: i0 is stored as string but if D[key] is a list we need this to be an int...
+                    # TODO: these _puts are going to write to commitlist/rollbacklist even though they aren't needed...
+                    #  at a minimum we should clear them every so often, but we may also want to path the functions
+                    #  commitlist_append, rollbacklist_append during this to be nops()
+                    _put(key, _tryint(i0), val)
+                elif i2 == "":
+                    _put(key, _tryint(i0), _tryint(i1), val)
+                elif i3 == "":
+                    _put(key, _tryint(i0), _tryint(i1), _tryint(i2), val)
+                elif i4 == "":
+                    _put(key, _tryint(i0), _tryint(i1), _tryint(i2), _tryint(i3), val)
+                elif i5 == "":
+                    _put(key, _tryint(i0), _tryint(i1), _tryint(i2), _tryint(i3), _tryint(i4), val)
+                elif i6 == "":
+                    _put(key, _tryint(i0), _tryint(i1), _tryint(i2), _tryint(i3), _tryint(i4), _tryint(i5), val)
+                elif i7 == "":
+                    _put(key, _tryint(i0), _tryint(i1), _tryint(i2), _tryint(i3), _tryint(i4), _tryint(i5), _tryint(i6), val)
+                else:
+                    _put(key, _tryint(i0), _tryint(i1), _tryint(i2), _tryint(i3), _tryint(i4), _tryint(i5), _tryint(i6), _tryint(i7), val)
+            except Exception:
+                log.exception("failed to deserialize row: %s" % repr(row))
             #print row
         log.info("loaded %d rows in %.2f secs" % (rows, time.time()-start))
 

@@ -161,6 +161,9 @@ class wrappedlist(list):
 
     def _append(self, val):
         list.append(self, val)
+        
+    def _unwrapped(self):
+        return super(wrappedlist, self)
 
 #wrappedlist = list
 #list = reallist

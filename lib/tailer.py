@@ -9,6 +9,9 @@ http://pypi.python.org/pypi/tailer/0.2.1
 import re
 import time
 
+class Idle:
+    pass
+
 class Tailer(object):
     """\
     Implements tailing and heading functionality like GNU tail and head
@@ -154,7 +157,7 @@ class Tailer(object):
         else:
             return []
 
-    def follow(self, delay=1.0):
+    def follow(self):
         """\
         Iterator generator that returns lines as data is added to the file.
 
@@ -183,7 +186,7 @@ class Tailer(object):
             else:
                 trailing = True
                 self.seek(where)
-                time.sleep(delay)
+                yield Idle
 
     def __iter__(self):
         return self.follow()
@@ -243,64 +246,3 @@ def _test():
     import doctest
     doctest.testmod()
 
-def _main(filepath, options):
-    tailer = Tailer(open(filepath, 'rb'))
-
-    try:
-        try:
-            if options.lines > 0:
-                if options.head:
-                    if options.follow:
-                        print >>sys.stderr, 'Cannot follow from top of file.'
-                        sys.exit(1)
-                    lines = tailer.head(options.lines)
-                else:
-                    lines = tailer.tail(options.lines)
-        
-                for line in lines:
-                    print line
-            elif options.follow:
-                # Seek to the end so we can follow
-                tailer.seek_end()
-
-            if options.follow:
-                for line in tailer.follow(delay=options.sleep):
-                    print line
-        except KeyboardInterrupt:
-            # Escape silently
-            pass
-    finally:
-        tailer.close()
-
-def main():
-    from optparse import OptionParser
-    import sys
-
-    parser = OptionParser(usage='usage: %prog [options] filename')
-    parser.add_option('-f', '--follow', dest='follow', default=False, action='store_true',
-                      help='output appended data as  the  file  grows')
-
-    parser.add_option('-n', '--lines', dest='lines', default=10, type='int',
-                      help='output the last N lines, instead of the last 10')
-
-    parser.add_option('-t', '--top', dest='head', default=False, action='store_true',
-                      help='output lines from the top instead of the bottom. Does not work with follow')
-
-    parser.add_option('-s', '--sleep-interval', dest='sleep', default=1.0, metavar='S', type='float',
-                      help='with  -f,  sleep  for  approximately  S  seconds between iterations')
-
-    parser.add_option('', '--test', dest='test', default=False, action='store_true',
-                      help='Run some basic tests')
-
-    (options, args) = parser.parse_args()
-
-    if options.test:
-        _test()
-    elif not len(args) == 1:
-        parser.print_help()
-        sys.exit(1)
-    else:
-        _main(args[0], options)
-
-if __name__ == '__main__':
-    main()

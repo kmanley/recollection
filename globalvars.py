@@ -27,8 +27,8 @@ def INCR_TXID():
 class NOTSPECIFIED: pass
 
 _COMMITLIST_APPEND = COMMITLIST.append
-def COMMITLIST_APPEND(key, command, idx=None, value=NOTSPECIFIED):
-    _COMMITLIST_APPEND((_TXID[0], key, command, idx or "", "" if value==NOTSPECIFIED else serialize(value)))
+def COMMITLIST_APPEND(key, command, idx=NOTSPECIFIED, value=NOTSPECIFIED):
+    _COMMITLIST_APPEND((_TXID[0], key, command, "" if idx==NOTSPECIFIED else idx, "" if value==NOTSPECIFIED else value))
 
 _ROLLBACKLIST_APPEND = ROLLBACKLIST.append
 def ROLLBACKLIST_APPEND(func, *args):
