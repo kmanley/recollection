@@ -1,5 +1,6 @@
 import wrap
 import globalvars
+#import lib.proxy as proxy
 
 _wrap = wrap._wrap
 _key_from_obj = globalvars._key_from_obj
@@ -58,6 +59,7 @@ ROLLBACKLIST_APPEND = globalvars.ROLLBACKLIST_APPEND
 # 'sort' TODO:
 
 #reallist = list
+#class wrappedlist(proxy.ListProxy):
 class wrappedlist(list):
     def __delitem__(self, *args, **kwargs):
         # No point in implementing, it's the same as pop()
@@ -146,24 +148,24 @@ class wrappedlist(list):
         ROLLBACKLIST_APPEND(self.reverse)
         COMMITLIST_APPEND(key, "REVERSE")
 
-    def sort(self):
+    def sort(self, *args, **kwargs):
         key = _key_from_obj(self) # NOTE: must come before mutating superclass call; as this could raise an exception
-        prev = self[::] # NOTE: shallow copy
-        list.sort(self)
+        prev = self._copy() # NOTE: shallow copy
+        list.sort(self, *args, **kwargs)
         ROLLBACKLIST_APPEND(self._set, prev)
-        COMMITLIST_APPEND(key, "SORT")
+        # NOTE: we use PUT here instead of journaling SORT to avoid the problem of serializing the params to sort, e.g.
+        # cmp, key, reverse...
+        COMMITLIST_APPEND(key, "PUT", None, self) # TODO: or self[::]?
 
     def _copy(self):
-        return self[::] # TODO: this is shallow copy, do we need deepcopy?
+        return wrappedlist(self[::]) # TODO: this is shallow copy, do we need deepcopy?
 
     def _set(self, val):
         list.__setslice__(self, 0, len(self), val)
 
-    def _append(self, val):
-        list.append(self, val)
+    #def _append(self, val):
+    #    list.append(self, val)
         
-    def _unwrapped(self):
-        return super(wrappedlist, self)
 
 #wrappedlist = list
 #list = reallist

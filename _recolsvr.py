@@ -141,16 +141,8 @@ INFO:root:journal writer thread starting...
 # TODO: master-slave, see here: http://zguide.zeromq.org/page:all#header-100 the section "getting a snapshot"
 """
 create table master (key text not null,
-                     i0 text not null,
-                     i1 text not null,
-                     i2 text not null,
-                     i3 text not null,
-                     i4 text not null,
-                     i5 text not null,
-                     i6 text not null,
-                     i7 text not null,
                      value text not null,
-                     primary key (key, i0, i1, i2, i3, i4, i5, i6, i7));
+                     primary key (key));
 CREATE TABLE lastwrite (txid int not null, seekpos int not null);
 insert into last values (0,0);
 
@@ -388,7 +380,7 @@ RECOL antipatterns
 
 
 # TODO: make another module the main entry point to avoid pyc compilation every time
-import re, os, zmq, time, ujson, traceback, types, threading, sqlite3, copy, random, math
+import sys, re, os, zmq, time, ujson, traceback, types, threading, sqlite3, copy, random, math
 import tailer
 import decimal, datetime, numpy, heapq, bisect, blist, operator
 import pydoc
@@ -545,7 +537,7 @@ class JournalWriterThread(threading.Thread):
         #self.curs.execute("insert into journal values(null, '%s')" % item)
         # TODO: need to batch these to improve performance
         #self.journal.write("insert into journal values(null, '%s')\n" % item)
-        msg = "".join(["%d:%s:%s:%s:%s\r\n" % (txid, repr(key), cmd, args, serialize(val._unwrapped())) for txid, key, cmd, args, val in tx])
+        msg = "".join(["%d:%s:%s:%s:%s\r\n" % (txid, repr(key), cmd, args, serialize(_unwrap(val))) for txid, key, cmd, args, val in tx])
         #print("begin write journal")
         #print msg[:-1]
         #for item in tx:
@@ -654,7 +646,7 @@ class XPerSec:
         else:
             self.count += 1
 
-from datatypes.wrap import _wrap
+from datatypes.wrap import _wrap, _unwrap
 import globalvars
 
 GLOBAL_OBJMAP = globalvars.OBJMAP
@@ -970,6 +962,8 @@ def incr(key, *args, **kwargs):
     put(key, *(args+(value,)))
     return value
 
+# TODO: def sync(hard=0): pass
+
 def info():
     # TODO: uptime, txid, journal queue length, other useful info
     return {"pid" : os.getpid(),
@@ -1152,6 +1146,8 @@ class Server:
         self.exit_requested = False
         self.journal_writer_thread = JournalWriterThread()
         self.zmq_context = zmq.Context()
+        self.db = sqlite3.connect("recollection.dat") # TODO:
+        self.curs = self.db.cursor()
 
     def console_ctrl_handler(self, event):
         """
@@ -1184,45 +1180,33 @@ class Server:
             finally:
                 fp.close()
         finally:
-            log.info("last txid was %s" % GLOBAL_GET_TXID())
+            log.info("last txid from journal was %s" % GLOBAL_GET_TXID())
+
+    def wait_for_db(self):
+        while not self.exit_requested:
+            dbtxid = self.curs.execute("select txid from lastwrite;").fetchone()[0]
+            if dbtxid == GLOBAL_GET_TXID():
+                log.info("db is in sync with journal")
+                break
+            elif dbtxid > GLOBAL_GET_TXID():
+                log.critical("internal error: db txid %s > journal txid %s" % (dbtxid, GLOBAL_GET_TXID()))
+                sys.exit(1)
+            else:
+                log.info("last db txid is %s, last journal txid is %s (%s txs behind)" % (dbtxid, GLOBAL_GET_TXID(), GLOBAL_GET_TXID()-dbtxid))
+                log.info("waiting for db to catch up...(please ensure db writer is running)")
+                time.sleep(1.0)
 
     def load_from_db(self):
-        self.db = sqlite3.connect("recollection.dat") # TODO:
-        self.curs = self.db.cursor()
-        # TODO: rename cols i1-i8, we have 9 currently and only want 8
-        self.curs.execute("select * from master order by key, i0, i1, i2, i3, i4, i5, i6, i7;")
+        self.curs.execute("select * from master order by key;")
         # TODO: need lazy iterator fetch here
         rows = 0
         start = time.time()
         for row in self.curs.fetchall():
             rows += 1
-            key, i0, i1, i2, i3, i4, i5, i6, i7, val = row
+            key, val = row
             val = deserialize(val)
             try:
-                # TODO: the following if/elif could probably be done more elegantly with a loop
-                #  actually, we only need one call to _put since _put can handle variable length subkeys
-                if i0 == "":
-                    _put(key, val)
-                elif i1 == "":
-                    # TODO: i0 is stored as string but if D[key] is a list we need this to be an int...
-                    # TODO: these _puts are going to write to commitlist/rollbacklist even though they aren't needed...
-                    #  at a minimum we should clear them every so often, but we may also want to path the functions
-                    #  commitlist_append, rollbacklist_append during this to be nops()
-                    _put(key, _tryint(i0), val)
-                elif i2 == "":
-                    _put(key, _tryint(i0), _tryint(i1), val)
-                elif i3 == "":
-                    _put(key, _tryint(i0), _tryint(i1), _tryint(i2), val)
-                elif i4 == "":
-                    _put(key, _tryint(i0), _tryint(i1), _tryint(i2), _tryint(i3), val)
-                elif i5 == "":
-                    _put(key, _tryint(i0), _tryint(i1), _tryint(i2), _tryint(i3), _tryint(i4), val)
-                elif i6 == "":
-                    _put(key, _tryint(i0), _tryint(i1), _tryint(i2), _tryint(i3), _tryint(i4), _tryint(i5), val)
-                elif i7 == "":
-                    _put(key, _tryint(i0), _tryint(i1), _tryint(i2), _tryint(i3), _tryint(i4), _tryint(i5), _tryint(i6), val)
-                else:
-                    _put(key, _tryint(i0), _tryint(i1), _tryint(i2), _tryint(i3), _tryint(i4), _tryint(i5), _tryint(i6), _tryint(i7), val)
+                _put(key, val)
             except Exception:
                 log.exception("failed to deserialize row: %s" % repr(row))
             #print row
@@ -1255,6 +1239,10 @@ class Server:
             win32api.SetConsoleCtrlHandler(self.console_ctrl_handler, 1)
 
         self.get_last_txid()
+
+        self.wait_for_db()
+        if self.exit_requested:
+            return
 
         self.load_from_db()
 

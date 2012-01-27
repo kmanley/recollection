@@ -93,36 +93,31 @@ class DBWriter(object):
         self.conn.commit()
         self.last_committed_txid = txid
         
-    def get_obj_from_db(self, key):
+    def get_obj(self, key):
         # TODO: introduce an in-memory cache
-        sql = "select value from master where key=? "
-        ands = " and ".join("i%s=?" % x for x in range(len(key[1:])))
-        if ands:
-            sql = sql + " and " + ands 
-        log.info(sql) # TODO:
-        serialized = self.curs.execute(sql, key).fetchall()
+        sql = "select value from master where key=?"
+        params = (key,)
+        log.info("sql: %s, params: %s" % (sql, repr(params))) # TODO:
+        serialized = self.curs.execute(sql, params).fetchall()
         assert len(serialized) == 1 # TODO:
         serialized = serialized[0][0]
-        obj = deserialize(serialized)
-        return obj
-    
+        baseobj = deserialize(serialized)
+        return baseobj
+        
+    def get_objs(self, key):
+        baseobj = self.get_obj(key[0])
+        obj = baseobj
+        for idx in key[1:]:
+            obj = obj[idx]
+        return baseobj, obj
+
     def put_obj_in_db(self, key, value):
-        keylen = len(key)
-        #qmarks = ",".join("?" * (keylen+1))
-        #sidxs = ",".join(["i%s" % x for x in range(keylen-1)])
-        #if sidxs:
-        #    sidxs = sidxs + ","
-        #sql = "insert into master (key, %s value) values (%s)" % (sidxs, qmarks)
-        
-        #where = 
-        #sql = "update master set value=? where key=? and i0=? and i1=? and i2=? and i3=? and i4=? and i5=? and i6=? and i7=?"
-        
-        
-        sql = "replace into master (key, i0, i1, i2, i3, i4, i5, i6, i7, value) values (?,?,?,?,?,?,?,?,?,?)"
-        params = key + (('',) * (9-keylen)) + (value,)
-        
-        #params = key + (value,)
-        #params = key + ((None,)*9) + (value,)  
+        """
+        key: key tuple, e.g. (key, subkey0, ...)
+        value: serialized value
+        """
+        sql = "replace into master (key, value) values (?,?)"
+        params = (key[0], value)
         log.info("%s, %s" % (sql, repr(params))) # TODO: 
         result = self.curs.execute(sql, params)
         print "rowcount: %s" % self.curs.rowcount
@@ -131,21 +126,36 @@ class DBWriter(object):
         #log.info("%s, %s" % (sql, repr(params))) # TODO: 
         #result = self.curs.execute(sql, params)
         #print "rowcount: %s" % self.curs.rowcount
+       
+    def handle_SETITEM(self, fp, txid, key, idx, value):
+        baseobj, obj = self.get_objs(key)
+        obj[int(idx)] = deserialize(value)
+        self.put_obj_in_db(key, serialize(baseobj))
         
     def handle_APPENDR(self, fp, txid, key, idx, value):
-        value = deserialize(value)
-        obj = self.get_obj_from_db(key)
-        obj.append(value)
-        self.put_obj_in_db(key, serialize(obj))
-        
-    def handle_SETITEM(self, fp, txid, key, idx, value):
-        idx = int(idx)
-        #value = deserialize(value)
-        # NOTE: no, we don't want to reconstitute the original object 
-        #obj = self.get_obj_from_db(key)
-        #obj[idx] = value
-        #self.put_obj_in_db(key, serialize(obj))
-        self.handle_PUT(fp, txid, key + (idx,), None, value)
+        baseobj, obj = self.get_objs(key)
+        obj.append(deserialize(value))
+        self.put_obj_in_db(key, serialize(baseobj))
+
+    def handle_EXTENDR(self, fp, txid, key, idx, value):
+        baseobj, obj = self.get_objs(key)
+        obj.extend(deserialize(value))
+        self.put_obj_in_db(key, serialize(baseobj))
+
+    def handle_INSERT(self, fp, txid, key, idx, value):
+        baseobj, obj = self.get_objs(key)
+        obj.insert(int(idx), deserialize(value))
+        self.put_obj_in_db(key, serialize(baseobj))
+
+    def handle_POP(self, fp, txid, key, idx, value):
+        baseobj, obj = self.get_objs(key)
+        obj.pop(int(idx))
+        self.put_obj_in_db(key, serialize(baseobj))
+    
+    def handle_REVERSE(self, fp, txid, key, idx, value):
+        baseobj, obj = self.get_objs(key)
+        obj.reverse()
+        self.put_obj_in_db(key, serialize(baseobj))
 
     def handle_COMMIT(self, fp, txid, key, idx, value):
         self.txid = txid
@@ -157,13 +167,16 @@ class DBWriter(object):
         self.ctr.incr()
         
     def handle_PUT(self, fp, txid, key, idx, value):
-        keylen = len(key)
-        # delete anything specified at a more granular level since we are overwriting
-        sql = "delete from master where key=? and i%s <> ''" % (keylen-1)
-        log.info(sql) # TODO:
-        self.curs.execute(sql, (key[0],))
-        self.put_obj_in_db(key, value)
-        
+        if len(key) == 1:
+            self.put_obj_in_db(key, value)
+        else:
+            baseobj = self.get_obj(key[0])
+            obj = baseobj
+            idxs = key[1:]
+            for idx in idxs[:-1]:
+                obj = obj[idx]
+            obj[idxs[-1]] = deserialize(value)
+            self.put_obj_in_db(key, serialize(baseobj))
 
     def process_line(self, fp, line):
         log.info(line) # TODO:

@@ -2,17 +2,20 @@ from types import ListType
 
 IDENTITY = lambda x : x
 COPY = lambda o : o._copy()
+UNPACK = lambda o : o._obj
 
 wrappedlist = None # NOTE: replaced when listtype is loaded
 
 def _wrap_list(o):
-    newobj = wrappedlist()
+    #newobj = wrappedlist()
     # TODO: listcomp faster?
-    for item in o:
-        newobj._append(_wrap(item))
-    return newobj
+    #for item in o:
+    #    newobj._append(_wrap(item))
+    #return newobj
+    return wrappedlist([_wrap(item) for item in o])
 
 WRAPPERS = {}
+UNWRAPPERS = {}
 
 def _create_wrappers():
     WRAPPERS.update({
@@ -39,6 +42,7 @@ def _create_wrappers():
         })
     return WRAPPERS
 
+
 def _wrap(o):
     typ = type(o)
     try:
@@ -48,3 +52,35 @@ def _wrap(o):
 
     return wrapper(o)
 
+def _unwrap_list(o):
+    return [_unwrap(item) for item in o]
+
+def _create_unwrappers():
+    UNWRAPPERS.update({
+        type(None) : IDENTITY,
+        bool : IDENTITY,
+        int : IDENTITY,
+        long : IDENTITY,
+        float : IDENTITY,
+        str : IDENTITY,
+        unicode : IDENTITY,
+        
+        wrappedlist : _unwrap_list,
+    })
+    return UNWRAPPERS
+
+
+def _unwrap(o):
+    typ = type(o)
+    try:
+        unwrapper = (UNWRAPPERS or _create_unwrappers())[typ]
+    except KeyError:
+        raise TypeError("internal error: unexpected type for unwrapping '%s' >%s<" % (typ, o)) # TODO: o could be big, just print part of it in that case
+
+    return unwrapper(o)
+
+    
+    
+    
+    
+    

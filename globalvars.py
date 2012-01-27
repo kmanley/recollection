@@ -6,8 +6,10 @@ _pickle_dumps = pickle.dumps
 _pickle_loads = pickle.loads
 def serialize(o):
     return _hexlify(_pickle_dumps(o, protocol=-1))
+    #return _pickle_dumps(o, protocol=-1)
 def deserialize(s):
     return _pickle_loads(_unhexlify(s))
+    #return _pickle_loads(s)
 
 SERVER = None
 OBJMAP = {}
