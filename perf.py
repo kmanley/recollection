@@ -1,5 +1,5 @@
 import recolcli, time, random
-ITERS = 50000000
+ITERS = 50000
 
 class XPerSec:
     def __init__(self, things):

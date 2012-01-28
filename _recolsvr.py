@@ -144,7 +144,7 @@ create table master (key text not null,
                      value text not null,
                      primary key (key));
 CREATE TABLE lastwrite (txid int not null, seekpos int not null);
-insert into last values (0,0);
+insert into lastwrite values (0,0);
 
 Notes: 
 21 Dec - using a sqlite journal is way too slow; queue keeps growing
@@ -384,6 +384,7 @@ import sys, re, os, zmq, time, ujson, traceback, types, threading, sqlite3, copy
 import tailer
 import decimal, datetime, numpy, heapq, bisect, blist, operator
 import pydoc
+import hashlib
 
 import cStringIO as StringIO
 # TODO:? too dangerous? import networkx as nx
@@ -468,6 +469,7 @@ class scoreboard(object):
     def iterkeys(self):
         return self._map.iterkeys()
 
+    
     def keys(self):
         # NOTE: we return a set here so we can use the |, &, -, ^ operators on the result
         retval = set(self.iterkeys())
@@ -665,6 +667,7 @@ from globalvars import serialize, deserialize
 #globals.TXID = 0
 
 D = {}
+EXECSTART = 0
 VARS = {}
 TEMPVAR = "_"
 TEMPVAR0= "_0"
@@ -672,7 +675,7 @@ TEMPVAR1 = "_1"
 TEMPVAR2 = "_2"
 EXPIRY_LIST = "_expiry_list"
 EXPIRY_XREF = "_expiry_xref"
-D[EXPIRY_LIST] = blist.sortedlist() # TODO: work out how this gets initialized
+D[EXPIRY_LIST] = blist.sortedlist() # TODO: work out how this gets initialized, needs to be wrapped for journaling..IMPORTANT!
 D[EXPIRY_XREF] = {} # TODO: work out how this gets initialized
 
 TXD = {}
@@ -734,6 +737,7 @@ def echo(value):
 #    # NOTE: TODO: this includes internal keys starting with _, e.g. for managing expirations
 #    return len(D)
 
+# TODO: get rid of keys, instead support iterkeys, itervalues, iteritems or some such
 def keys():
     return sorted(D.keys())
 
@@ -767,7 +771,7 @@ def erase(key, index=None):
 
 def exists(key, *idxs):
     try:
-        _get(key, *idxs) # NOT get(), as we don't want to trigger journal
+        _get(key, *idxs) 
     except (TypeError, AttributeError, KeyError):
         return False
     else:
@@ -781,12 +785,16 @@ def exists(key, *idxs):
 # action make them use mut('key',...) The rationale is that if we have to figure out whether
 # the action is mutating it will slow down the server
 def _get(key, *idxs, **kwargs):
-    obj = D.get(key, kwargs.get("default", None))
+    obj = D.get(key, kwargs.get("default", NOTSET))
+    if obj==NOTSET:
+        raise KeyError(key)
     for idx in idxs:
         obj = obj[idx]
     #obj = WRAPPERS[type(obj)](obj)
     globalvars.OBJMAP[id(obj)] = (key,) + idxs
     return obj
+
+get = _get
 
 """
 TODO: think about ways we can automatically index objects
@@ -860,8 +868,6 @@ def page(data, pagenum, pagesize=50):
 def length(key, *idxs, **kwargs):
     return len(_get(key, *idxs, **kwargs))
 
-get = _get
-
 def copy(key, *idxs, **kwargs):
     return fast_copy(_get(key, *idxs, **kwargs))
 
@@ -880,8 +886,8 @@ def expirations():
 def expire(key, when):
     if type(when) == DATETIME_TYPE:
         when = time.mktime(when.timetuple())
-    expiry_list = get(EXPIRY_LIST) # triggers journaling
-    expiry_xref = get(EXPIRY_XREF) # triggers journaling
+    expiry_list = get(EXPIRY_LIST) 
+    expiry_xref = get(EXPIRY_XREF) 
     existing = expiry_xref.get(key)
     if existing:
         # This key already has an expiry specified. It only makes sense to have a single expiry for
@@ -894,8 +900,8 @@ def expire(key, when):
 def persist(key):
     existing  = D[EXPIRY_XREF].get(key)
     if existing:
-        expiry_list = get(EXPIRY_LIST) # NOTE: triggers journal
-        expiry_xref = get(EXPIRY_XREF) # NOTE: triggers journal
+        expiry_list = get(EXPIRY_LIST) 
+        expiry_xref = get(EXPIRY_XREF) 
         expiry_list.discard(existing)
         expiry_xref.pop(key)
         return True
@@ -910,9 +916,11 @@ def ttl(key):
     else:
         return None
 
-def putnx(key, value):
-    # TODO: journaling; only journal if it didn't exist!
-    return D.setdefault(key, value)
+# putnx is not needed, you can simply say 
+#    exists('key') or put('key', value)
+#def putnx(key, value):
+#    # TODO: journaling; only journal if it didn't exist!
+#    return D.setdefault(key, value)
 
 #from datatypes.wraptype import _wrap
 # TODO: raise exception if more than key + 8 subkeys, as this won't fit in current db schema
@@ -965,9 +973,16 @@ def incr(key, *args, **kwargs):
 # TODO: def sync(hard=0): pass
 
 def info():
-    # TODO: uptime, txid, journal queue length, other useful info
+    # TODO: uptime, txid, journal queue length, other useful info, length of prepared expression cache
+    # TODO: would it be better just to have individual functions for all these things?
     return {"pid" : os.getpid(),
             "num_keys" : len(D)}
+    
+def profile(res):
+    secs = (time.clock() - EXECSTART)
+    msecs = secs * 1000.0
+    tps = 1.0 / secs
+    return {"res" : res, "msecs" : msecs, "tps" : tps}
 
 def decr(key, *args, **kwargs):
     kwargs["by"] = -kwargs.get("by", 1)
@@ -1001,6 +1016,15 @@ def var(name, value=NOTSET):
     else:
         VARS[name] = value
         return value
+    
+PREPARED_QUERIES = {}
+
+# TODO: need to prevent PREPARED_QUERIES from growing without bound
+#def prepare(query, key=None):
+#    if key==None:
+#        key = hashlib.sha256(query).hexdigest()
+#    PREPARED_QUERIES[key] = compile(query, "<string>", "eval")
+#    return key
 
 def shutdown():
     globalvars.SERVER.exit_requested = True
@@ -1124,13 +1148,17 @@ EVAL_LOCALS = { # modules
                 "incr" : incr,
                 "info" : info,
                 "j2p" : j2p,
+                "keys" : keys,
                 "kind" : kind,
                 "length" : length,
                 "nop" : nop,
                 "page" : page,
                 "p2j" : p2j,
                 "ping" : ping,
+                #"prepare" : prepare,
+                "profile" : profile,
                 "put" : put,
+                "randkey" : randkey,
                 "shutdown" : shutdown,
                 }
 
@@ -1194,7 +1222,7 @@ class Server:
             else:
                 log.info("last db txid is %s, last journal txid is %s (%s txs behind)" % (dbtxid, GLOBAL_GET_TXID(), GLOBAL_GET_TXID()-dbtxid))
                 log.info("waiting for db to catch up...(please ensure db writer is running)")
-                time.sleep(1.0)
+                time.sleep(2.0)
 
     def load_from_db(self):
         self.curs.execute("select * from master order by key;")
@@ -1261,23 +1289,35 @@ class Server:
                 if str(z) == "Context was terminated": # TODO: brittle
                     break
             now = time.time()
-            execstart = time.clock()
+            global VARS, EXECSTART
+            EXECSTART = time.clock()
+            #execstart = time.clock()
             self.do_expiry(now)
-            global VARS
             GLOBAL_INCR_TXID()
             VARS = {}
             GLOBAL_OBJMAP.clear()
             GLOBAL_COMMITLIST.__imul__(0) # this is the only way I found to clear a list in place
-            GLOBAL_ROLLBACKLIST.__imul__(0)
+            GLOBAL_ROLLBACKLIST.__imul__(0) # TODO: get rid of dotted qualifiers
             try:
-                result = eval(command, EVAL_GLOBALS, EVAL_LOCALS)
-                elapsed = (time.clock() - execstart) or 0.0000000001 # TODO:
-                if type(result) == Preformatted:
-                    result = ujson.dumps(result)
-                else:
-                    result = ujson.dumps({"res":result, "cps": 1. / elapsed})
+                #if command[0] == "*": # dereference operator, get it? TODO: is startswith faster?
+                #    command = PREPARED_QUERIES[command[1:]]
+                # TODO: if length of command is too long, maybe don't use it directly as key? 
+                #  needs more thought...maybe go back to the explicit prepare(...) function. Another
+                #  advantage of explicit prep is user can specify a short key for a long query so less
+                #  net traffic
+                compiled = PREPARED_QUERIES.get(command)
+                if compiled is None:
+                    compiled = compile(command, "<string>", "eval")
+                    PREPARED_QUERIES[command] = compiled
+                result = eval(compiled, EVAL_GLOBALS, EVAL_LOCALS)
+                #elapsed = (time.clock() - execstart) or 0.0000000001 # TODO:
+                result = ujson.dumps(result) # TODO: don't need Preformatted any more
+                #if type(result) == Preformatted:
+                    #result = ujson.dumps(result)
+                #else:
+                    #result = ujson.dumps({"res":result, "cps": 1. / elapsed})
             except Exception, e:
-                # TODO: handle error during rollback--panic
+                # TODO: handle error during rollback--log which keys may be out of sync but keep going
                 if GLOBAL_ROLLBACKLIST:
                     log.info("START ROLLBACK:") # TODO:
                     for item in reversed(GLOBAL_ROLLBACKLIST):
@@ -1286,7 +1326,7 @@ class Server:
                         func(*args)
                     log.info("END ROLLBACK:") # TODO:
                 traceback.print_exc()
-                result = ujson_dumps({"err" : "%s: %s" % (e.__class__.__name__, str(e)), "cps": 1. / (time.clock() - execstart)})
+                result = ujson_dumps({"err" : "%s: %s" % (e.__class__.__name__, str(e))})
             else:
                 if GLOBAL_COMMITLIST:
                     COMMITLIST_APPEND("", "COMMIT")

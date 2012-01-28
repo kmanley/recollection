@@ -97,7 +97,7 @@ class DBWriter(object):
         # TODO: introduce an in-memory cache
         sql = "select value from master where key=?"
         params = (key,)
-        log.info("sql: %s, params: %s" % (sql, repr(params))) # TODO:
+        log.debug("sql: %s, params: %s" % (sql, repr(params))) # TODO:
         serialized = self.curs.execute(sql, params).fetchall()
         assert len(serialized) == 1 # TODO:
         serialized = serialized[0][0]
@@ -118,9 +118,9 @@ class DBWriter(object):
         """
         sql = "replace into master (key, value) values (?,?)"
         params = (key[0], value)
-        log.info("%s, %s" % (sql, repr(params))) # TODO: 
+        log.debug("%s, %s" % (sql, repr(params))) # TODO: 
         result = self.curs.execute(sql, params)
-        print "rowcount: %s" % self.curs.rowcount
+        #print "rowcount: %s" % self.curs.rowcount
         #if self.curs.rowcount == 0:
         #    sql = "insert into master (value, key, i0, i1, i2, i3, i4, i5, i6, i7) values (?,?,?,?,?,?,?,?,?,?)"
         #log.info("%s, %s" % (sql, repr(params))) # TODO: 
@@ -163,7 +163,7 @@ class DBWriter(object):
         now = time.time()
         if (now - self.last_commit_time) > 5.0: # TODO: hardcoded
             self.commit(self.txid, fp.tell())
-            self.last_commit = now
+            self.last_commit_time = now
         self.ctr.incr()
         
     def handle_PUT(self, fp, txid, key, idx, value):
@@ -179,7 +179,7 @@ class DBWriter(object):
             self.put_obj_in_db(key, serialize(baseobj))
 
     def process_line(self, fp, line):
-        log.info(line) # TODO:
+        log.debug(line) # TODO:
         txid, key, cmd, idx, value = line.split(":")
         self.txid = long(txid)
         key = eval(key)
