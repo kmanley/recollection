@@ -439,7 +439,8 @@ DATETIME_TYPE = datetime.datetime
 SMALLEST_LEXICAL_CHAR = ''
 LARGEST_LEXICAL_CHAR = '\xff'
 
-journal_queue = Queue.Queue()
+FSYNC_QUEUE = Queue.Queue(1)
+JOURNAL_QUEUE = Queue.Queue()
 
 # TODO: implement __slots__
 # TODO rename to ranklist? or index? as this can be used for indexes too
@@ -532,26 +533,22 @@ class JournalWriterThread(threading.Thread):
     def __init__(self):
         threading.Thread.__init__(self)
         self.ctr = 0
+        self.need_fsync = False
 
     def process_tx(self, tx):
-        #print("processing journal item %s" % item)
-        #time.sleep(0.1)
-        #self.curs.execute("insert into journal values(null, '%s')" % item)
-        # TODO: need to batch these to improve performance
-        #self.journal.write("insert into journal values(null, '%s')\n" % item)
         msg = "".join(["%d:%s:%s:%s:%s\r\n" % (txid, repr(key), cmd, args, serialize(_unwrap(val))) for txid, key, cmd, args, val in tx])
-        #print("begin write journal")
-        #print msg[:-1]
-        #for item in tx:
-        #    key, cmd, val = item
-        #    print("journal entry: %s, %s, %s" % (key, cmd, val))
-        #print("end write journal")
         self.journal.write(msg)
-        self.journal.flush() # TODO: remove, just for debugging
-        #self.journal.write("%s,%s,%s" % (item[0], item[1], base64.encodestring(item[1])))
+        self.need_fsync = True
+        # TODO: currently we fsync on demand (client calls fsync()) or when the queue is idle, but if queue is 
+        # very busy we also need to fsync every n (configurable) seconds, or every m (configurable) writes, call self.fsync()
         self.ctr += 1
-        #if self.ctr % self.BATCH_SIZE == 0:
-        #    self.db.commit()
+        
+    def fsync(self):
+        if self.need_fsync:
+            log.info("fsync") # TODO:
+            self.journal.flush()
+            os.fsync(self.journal.fileno())
+            self.need_fsync = False
 
     def run(self):
         self.journal = open(JOURNALFILE, "ab") # TODO: location
@@ -563,26 +560,31 @@ class JournalWriterThread(threading.Thread):
         log.info("journal writer thread starting...") 
         try:
             while True:
-                qsize = journal_queue.qsize()
+                qsize = JOURNAL_QUEUE.qsize()
                 #log.info("QSIZE %s" % qsize) # TODO:
                 if (qsize >= QSIZE_WARNING_LIMIT) and (time.time() - last_warning_time > 5):
                     log.warning("db queue size: %d" % qsize)
                     last_warning_time = time.time()
                 try:
-                    tx = journal_queue.get(True, 2.0) # TODO: make wait time configurable
+                    qitem = JOURNAL_QUEUE.get(True, 2.0) # TODO: make wait time configurable
                 except Queue.Empty:
+                    log.debug("JOURNAL_QUEUE EMPTY")
+                    self.fsync()
                     time.sleep(0.001)
                 else:
-                    log.debug("POP %s" % (repr(tx),)) # TODO:
+                    log.debug("JOURNAL_QUEUE POP %s" % (repr(qitem),)) # TODO:
                     # TODO: make sure no real data can be in queue after the quit sentinel
-                    if tx == QUITSENTINEL:
+                    if qitem == QUITSENTINEL:
                         log.info("journal writer thread got exit sentinel")
                         return
+                    elif qitem == FSYNC_QUEUE:
+                        self.fsync()
+                        qitem.put(1) # signal main thread
                     else:
                         try: 
-                            self.process_tx(tx)
+                            self.process_tx(qitem)
                         finally:
-                            journal_queue.task_done()
+                            JOURNAL_QUEUE.task_done()
         finally:
             #self.db.commit()
             log.info("journal writer thread stopping")            
@@ -767,7 +769,7 @@ def erase(key, index=None):
             del D[key]
         except KeyError:
             pass
-    # TODO: write to journal
+    # TODO: write to journal!!
 
 def exists(key, *idxs):
     try:
@@ -795,6 +797,10 @@ def _get(key, *idxs, **kwargs):
     return obj
 
 get = _get
+
+def mget(*keys, **kwargs):
+    return [(get(key, kwargs=kwargs) if type(key) in STRING_TYPES else \
+             get(key[0], *tuple(key[1:]), **kwargs)) for key in keys]
 
 """
 TODO: think about ways we can automatically index objects
@@ -870,9 +876,6 @@ def length(key, *idxs, **kwargs):
 
 def copy(key, *idxs, **kwargs):
     return fast_copy(_get(key, *idxs, **kwargs))
-
-#def get(key, *idxs, **kwargs):
-#    return fast_copy(_get(key, *idxs, **kwargs))
 
 def doc(obj):
     return getattr(obj, "__doc__", None)
@@ -1019,6 +1022,12 @@ def var(name, value=NOTSET):
     else:
         VARS[name] = value
         return value
+
+FSYNCFLAG = 0   
+def fsync(_=None):
+    global FSYNCFLAG
+    FSYNCFLAG = 1
+    return _
     
 PREPARED_QUERIES = {}
 
@@ -1147,6 +1156,9 @@ EVAL_LOCALS = { # modules
                 "echo" : echo,
                 "erase" : erase,
                 "exists" : exists,
+                "expire" : expire,
+                "expirations" : expirations,
+                "fsync" : fsync,
                 "get" : get,
                 "help" : help,
                 "incr" : incr,
@@ -1155,15 +1167,19 @@ EVAL_LOCALS = { # modules
                 "keys" : keys,
                 "kind" : kind,
                 "length" : length,
+                "mget" : mget,
                 "nop" : nop,
-                "page" : page,
                 "p2j" : p2j,
+                "page" : page,
+                "persist" : persist,
                 "ping" : ping,
                 #"prepare" : prepare,
                 "profile" : profile,
                 "put" : put,
                 "randkey" : randkey,
+                "rename" : rename,
                 "shutdown" : shutdown,
+                "ttl" : ttl,
                 }
 
 def _tryint(i):
@@ -1293,12 +1309,14 @@ class Server:
                 if str(z) == "Context was terminated": # TODO: brittle
                     break
             now = time.time()
-            global VARS, EXECSTART
+            global VARS, EXECSTART, FSYNCFLAG
+            VARS = {}
             EXECSTART = time.clock()
+            FSYNCFLAG = 0
             #execstart = time.clock()
             self.do_expiry(now)
             GLOBAL_INCR_TXID()
-            VARS = {}
+            
             GLOBAL_OBJMAP.clear()
             GLOBAL_COMMITLIST.__imul__(0) # this is the only way I found to clear a list in place
             GLOBAL_ROLLBACKLIST.__imul__(0) # TODO: get rid of dotted qualifiers
@@ -1335,7 +1353,13 @@ class Server:
                 if GLOBAL_COMMITLIST:
                     COMMITLIST_APPEND("", "COMMIT")
                     log.debug("PUSH %s" % repr(GLOBAL_COMMITLIST)) # TODO:
-                    journal_queue.put(GLOBAL_COMMITLIST[::]) # TODO: NOTE: shallow copy; is that right?
+                    JOURNAL_QUEUE.put(GLOBAL_COMMITLIST[::]) # TODO: NOTE: shallow copy; is that right?
+                # NOTE: the following should NOT be indented under if GLOBAL_COMMITLIST, because an fsync()
+                # may appear as a command by itself, in which case we still want it to have an effect 
+                if FSYNCFLAG:
+                    JOURNAL_QUEUE.put(FSYNC_QUEUE)
+                    FSYNC_QUEUE.get() # block until journal thread does the fsync
+                    FSYNC_QUEUE.task_done()
             finally:
                 elapsed = now - start
                 if elapsed > 2: # TODO: parameterize
@@ -1366,7 +1390,7 @@ class Server:
             zmq.core.error.ZMQError: Context was terminated
             """
             socket.send(result)
-        journal_queue.put(QUITSENTINEL)            
+        JOURNAL_QUEUE.put(QUITSENTINEL)            
         log.info("waiting for journal writer thread to catch up")
         self.journal_writer_thread.join()
         log.info("did %d writes, verify journal contains same number!" % debug_writes) # TODO: remove
