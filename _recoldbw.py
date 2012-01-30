@@ -94,7 +94,7 @@ class DBWriter(object):
         return self.curs.fetchall()[0][0]
 
     def commit(self, txid, seekpos):
-        log.info("db commit at txid %s, seekpos %s" % (txid, seekpos))
+        log.info("db commit @ txid %s, seekpos %s" % (txid, seekpos))
         self.curs.execute("update lastwrite set txid=?, seekpos=?", (txid, seekpos))
         self.conn.commit()
         self.last_committed_txid = txid
@@ -198,12 +198,15 @@ class DBWriter(object):
             self.put_obj_in_db(key, serialize(baseobj))
 
     def process_line(self, fp, line):
-        log.debug(line) # TODO:
-        txid, key, cmd, idx, value = line.split(":")
-        self.txid = long(txid)
-        key = eval(key)
-        func = getattr(self, "handle_%s" % cmd)
-        func(fp, txid, key, idx, value)
+        try:
+            log.debug(line) # TODO:
+            txid, key, cmd, idx, value = line.strip().split(":")
+            self.txid = long(txid)
+            key = eval(key)
+            func = getattr(self, "handle_%s" % cmd)
+            func(fp, txid, key, idx, value)
+        except Exception:
+            log.exception("failed to process line: %s" % repr(line))
 
     def wait_for_journal(self):
         while True:
@@ -227,8 +230,10 @@ class DBWriter(object):
             
         with open(JOURNALFILE, "rb") as fp:
             fp.seek(self.seekpos)
-            t = tailer.Tailer(fp, end=False)
+            t = tailer.Tailer(fp)
             for line in t.follow():
+                #print "line: %s" % repr(line)
+                
                 if self.exit_requested:
                     break
                 
@@ -237,7 +242,7 @@ class DBWriter(object):
                         self.commit(self.txid, fp.tell())
                     time.sleep(1.0) # TODO: config
                 else:
-                    self.process_line(fp, line.strip())
+                    self.process_line(fp, line)
 
         log.info("exiting")
 

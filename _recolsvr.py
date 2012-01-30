@@ -1,4 +1,8 @@
 """
+For sharding/clustering, consider openpgm with zeromq
+it's tricky to setup, see here:
+lists.zeromq.org/pipermail/zeromq-dev/2011-April/010715.html
+
 TODO:
 pyInstaller is cross-platform and very powerful, with many third-party packages (matplotlib, numpy, PyQT4, ...)
 specially supported "out of the box", support for eggs, code-signing on Windows (and a couple other Windows-only goodies,
@@ -536,7 +540,7 @@ class JournalWriterThread(threading.Thread):
         self.need_fsync = False
 
     def process_tx(self, tx):
-        msg = "".join(["%d:%s:%s:%s:%s\r\n" % (txid, repr(key), cmd, args, serialize(_unwrap(val))) for txid, key, cmd, args, val in tx])
+        msg = "".join(["%d:%s:%s:%s:%s\n" % (txid, repr(key), cmd, args, serialize(_unwrap(val))) for txid, key, cmd, args, val in tx])
         self.journal.write(msg)
         self.need_fsync = True
         # TODO: currently we fsync on demand (client calls fsync()) or when the queue is idle, but if queue is 
@@ -545,7 +549,7 @@ class JournalWriterThread(threading.Thread):
         
     def fsync(self):
         if self.need_fsync:
-            log.info("fsync") # TODO:
+            #log.debug("fsync") # TODO:
             self.journal.flush()
             os.fsync(self.journal.fileno())
             self.need_fsync = False
@@ -563,7 +567,7 @@ class JournalWriterThread(threading.Thread):
                 qsize = JOURNAL_QUEUE.qsize()
                 #log.info("QSIZE %s" % qsize) # TODO:
                 if (qsize >= QSIZE_WARNING_LIMIT) and (time.time() - last_warning_time > 5):
-                    log.warning("db queue size: %d" % qsize)
+                    log.warning("journal queue size: %d" % qsize)
                     last_warning_time = time.time()
                 try:
                     qitem = JOURNAL_QUEUE.get(True, 2.0) # TODO: make wait time configurable
@@ -1347,7 +1351,7 @@ class Server:
                         func, args = item
                         func(*args)
                     log.info("END ROLLBACK:") # TODO:
-                traceback.print_exc()
+                #traceback.print_exc()
                 result = ujson_dumps({"err" : "%s: %s" % (e.__class__.__name__, str(e))})
             else:
                 if GLOBAL_COMMITLIST:
@@ -1363,7 +1367,7 @@ class Server:
             finally:
                 elapsed = now - start
                 if elapsed > 2: # TODO: parameterize
-                    log.info("%.2f req/sec" % (reqs/elapsed))
+                    log.info("%.2f req/sec @ txid %s" % (reqs/elapsed, GLOBAL_GET_TXID()))
                     reqs = 0
                     start = now
                 else:
