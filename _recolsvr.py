@@ -933,7 +933,10 @@ def _put(key, *args, **kwargs):
         for idx in idxs[:-1]:
             obj = obj[idx]
         globalvars.OBJMAP[id(obj)] = (key,) + idxs[:-1] # TODO: idxs[:-1] repeated, idxs[-1] repeated, could optimize
-        prev = obj[idxs[-1]]
+        try:
+            prev = obj[idxs[-1]]
+        except KeyError:
+            prev = None
         obj[idxs[-1]] = val
     else:
         try:
@@ -1030,6 +1033,7 @@ def shutdown():
     globalvars.SERVER.exit_requested = True
 
 from datatypes.listtype import wrappedlist
+from datatypes.dicttype import wrappeddict
 
 ALLOWED_BUILTINS = {
     'abs':abs,

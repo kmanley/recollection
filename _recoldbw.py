@@ -34,6 +34,12 @@ def deserialize(s):
 def serialize(o):
     return hexlify(pickle_dumps(o))
 
+def _tryint(i):
+    try:
+        return int(i)
+    except:
+        return i
+
 JOURNALFILE = r"c:\temp\journal.txt" # TODO: config
 
 class XPerSec:
@@ -112,6 +118,19 @@ class DBWriter(object):
         return baseobj, obj
 
     def put_obj_in_db(self, key, value):
+        # TODO: I think we can make this more efficient as follows
+        # 1. get_obj only gets object from db if it isn't already in memory cache
+        #   if in memory cache just return existing handle
+        # 2. put_obj_in_db just updates the memory cache
+        # 3. when we do a commit() to sqlite, we
+        #    - run through all key, value in the in-memory cache
+        #    - write all those to database
+        #    - commit database
+        # For handle_PUT, since we already have the serialized value, we need to
+        #   deserialize and put into in-memory cache 
+        # Need to control size of in-memory cache to prevent it from getting too big
+        #   maybe clear it on each commit, or (better) do some LRU thing
+        # I think the above is correct, but may need more thought...
         """
         key: key tuple, e.g. (key, subkey0, ...)
         value: serialized value
@@ -129,7 +148,7 @@ class DBWriter(object):
        
     def handle_SETITEM(self, fp, txid, key, idx, value):
         baseobj, obj = self.get_objs(key)
-        obj[int(idx)] = deserialize(value)
+        obj[_tryint(idx)] = deserialize(value)
         self.put_obj_in_db(key, serialize(baseobj))
         
     def handle_APPENDR(self, fp, txid, key, idx, value):
@@ -149,7 +168,7 @@ class DBWriter(object):
 
     def handle_POP(self, fp, txid, key, idx, value):
         baseobj, obj = self.get_objs(key)
-        obj.pop(int(idx))
+        obj.pop(_tryint(idx))
         self.put_obj_in_db(key, serialize(baseobj))
     
     def handle_REVERSE(self, fp, txid, key, idx, value):

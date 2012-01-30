@@ -1,10 +1,11 @@
-from types import ListType
+from types import ListType, DictType
 
 IDENTITY = lambda x : x
 COPY = lambda o : o._copy()
 UNPACK = lambda o : o._obj
 
 wrappedlist = None # NOTE: replaced when listtype is loaded
+wrappeddict = None # NOTE: replaced when dicttype is loaded
 
 def _wrap_list(o):
     #newobj = wrappedlist()
@@ -13,6 +14,9 @@ def _wrap_list(o):
     #    newobj._append(_wrap(item))
     #return newobj
     return wrappedlist([_wrap(item) for item in o])
+
+def _wrap_dict(o):
+    return wrappeddict({key:_wrap(value) for key, value in o.iteritems()})
 
 WRAPPERS = {}
 UNWRAPPERS = {}
@@ -26,7 +30,8 @@ def _create_wrappers():
         float : IDENTITY,
         str : IDENTITY,
         unicode : IDENTITY,
-        ListType  : _wrap_list,
+        ListType : _wrap_list,
+        DictType : _wrap_dict, 
         # if we see a wrapped type, then either the user is doing something like:
         # put('x', [1,2,3])
         # put('y', [1, 2, get('x')])
@@ -39,6 +44,7 @@ def _create_wrappers():
         # in this case the rollback calls _put which calls _wrap and we don't really need a copy but
         # there's no harm since rollbacks should be infrequent.
         wrappedlist : COPY,
+        wrappeddict : COPY,
         })
     return WRAPPERS
 
@@ -55,6 +61,9 @@ def _wrap(o):
 def _unwrap_list(o):
     return [_unwrap(item) for item in o]
 
+def _unwrap_dict(o):
+    return {key:_unwrap(value) for key, value in o.iteritems()}
+
 def _create_unwrappers():
     UNWRAPPERS.update({
         type(None) : IDENTITY,
@@ -66,6 +75,7 @@ def _create_unwrappers():
         unicode : IDENTITY,
         
         wrappedlist : _unwrap_list,
+        wrappeddict : _unwrap_dict,
     })
     return UNWRAPPERS
 
@@ -79,8 +89,3 @@ def _unwrap(o):
 
     return unwrapper(o)
 
-    
-    
-    
-    
-    

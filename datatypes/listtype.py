@@ -61,6 +61,14 @@ ROLLBACKLIST_APPEND = globalvars.ROLLBACKLIST_APPEND
 #reallist = list
 #class wrappedlist(proxy.ListProxy):
 class wrappedlist(list):
+    def __delattr__(self, *args, **kwargs):
+        # TODO: not sure in what context this is called (?)
+        raise NotImplementedError()
+
+    def __setattr__(self, *args, **kwargs):
+        # TODO: not sure in what context this is called (?)
+        raise NotImplementedError()
+    
     def __delitem__(self, *args, **kwargs):
         # No point in implementing, it's the same as pop()
         raise NotImplementedError("please use list.pop(index) instead")
@@ -155,7 +163,7 @@ class wrappedlist(list):
         ROLLBACKLIST_APPEND(self._set, prev)
         # NOTE: we use PUT here instead of journaling SORT to avoid the problem of serializing the params to sort, e.g.
         # cmp, key, reverse...
-        COMMITLIST_APPEND(key, "PUT", None, self) # TODO: or self[::]?
+        COMMITLIST_APPEND(key, "PUT", None, self) # TODO: or self._copy?
 
     def _copy(self):
         return wrappedlist(self[::]) # TODO: this is shallow copy, do we need deepcopy?
