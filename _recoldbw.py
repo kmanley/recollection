@@ -1,3 +1,4 @@
+import datetime
 import lib.tailer as tailer
 import os, sqlite3, time
 import binascii
@@ -200,7 +201,10 @@ class DBWriter(object):
     def process_line(self, fp, line):
         try:
             log.debug(line) # TODO:
-            txid, key, cmd, idx, value = line.strip().split(":")
+            # TODO: FIX! this breaks if key has a pipe in it!! 
+            sts, txid, key, cmd, idx, value = line.strip().split("|")
+            # TODO: now that we have timestamp, display in log how many seconds behind we are
+            ts = datetime.datetime.strptime(sts, "%Y-%m-%d %H:%M:%S.%f" ) # TODO: optimize
             self.txid = long(txid)
             key = eval(key)
             func = getattr(self, "handle_%s" % cmd)

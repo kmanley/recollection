@@ -1,4 +1,183 @@
 """
+
+
+# TODO: look into SQLLite Studio
+http://sqlitestudio.one.pl
+
+# TODO: consider using Spread Toolkit
+http://www.spread.org/SpreadOverview.html
+for communication between recolsvr nodes in a cluster setting, this may make failover/etc easier
+Reliable multicast from any number of senders to lots of receivers, etc.
+http://www.savarese.com/software/libssrcspread/
+
+http://stackoverflow.com/questions/620877/what-algorithms-there-are-for-failover-in-a-distributed-system
+http://en.wikipedia.org/wiki/Chord_%28peer-to-peer%29
+http://en.wikipedia.org/wiki/Distributed_hash_table
+http://en.wikipedia.org/wiki/Tapestry_%28DHT%29
+http://current.cs.ucsb.edu/projects/chimera/
+http://ants.etse.urv.es/wiki/Chord
+http://en.wikipedia.org/wiki/Kademlia
+http://en.wikipedia.org/wiki/Pastry_%28DHT%29
+http://ants.etse.urv.es/wiki/Pastry
+http://pdos.csail.mit.edu/chord/#downloads
+http://kadc.sourceforge.net/
+http://www.freepastry.org/ - has a Java implementation
+http://khashmir.sourceforge.net/
+http://www.heim-d.uni-sb.de/~heikowu/SharkyPy/ - implementation of Kademlia
+http://entangled.sourceforge.net/
+https://github.com/gardaud/pyChord
+http://twistedmatrix.com/trac/browser/sandbox/chord.py
+http://lysol.github.com/congress/ # kademlia-like dht lib in python ** TODO: may be able to adapt this
+http://blog.notdot.net/2009/11/Implementing-a-DHT-in-Go-part-1 (and part 2)
+http://www.bittorrent.org/beps/bep_0005.html
+http://www.linuxjournal.com/article/6797
+
+Chimera seems to be a successor to Tapestry (?)
+Implementation of Chimera in C - this is a good example of what I envision, an overlay network that can make callbacks
+into client code and which can route app-layer messages in addition to message required by the DHT. 
+http://current.cs.ucsb.edu/projects/chimera/download.html
+See the docs folder in that download for more info
+
+grep pypi for dht, etc.
+grep github for dht, chord, etc.
+Kademlia looks interesting, node leave/failure is simply no action...
+http://everythingisdata.wordpress.com/2009/11/03/chord-a-scalable-peer-to-peer-lookup-service-for-internet-applications/
+TODO: can one of these C/C++ overlay networks like Chimera or Tapestry somehow be integrated?
+TODO: separate project to implement Chord algorithm on top of ZeroMQ and allow this to be used as a library
+by other code including recol
+So the cluster vision is:
+ - nodes can come and go at any time thanks to chord stabilization
+ - when a client has to retrieve a key from the kv store, it uses the chord algorithm to get it from the node where it resides
+ - when a client has to write a key to the kv store, it uses the chord algorithm to put it in the node where it belongs
+ - clients can talk to any node in the cluster, when client starts you give it the ip of a single node and from 
+     that node we can get a list of other nodes; these are returned to the client and it can round-robin requests
+ - individual node redundancy via slaveof, can consider failover as a separate issue
+ 
+Considerations for DHT
+ - no longer have isolation, clients can be talking to nodes at same time, e.g. for 
+     put(key1, get(key2) + get(key3))
+   key1, key2, and key3 could map to 3 different machines. the value at key3 could be changed
+   after key2 is read but before key3 is read. But maybe that doesn't matter.
+   
+- more concerning, queries like
+    put(key1, 100), put(key2, 200) 
+   are no longer atomic if key1 & key2 map to different nodes. But maybe this is just a documented limitation of the API
+   
+- TODO: important: furthermore how would this work?
+    put(key1, [1,2,3,4,5])
+    get(key1).append(6)
+    suppose key1 is stored on node100, but the query is handled by node200
+    node200 gets key1 from node100 and has a local handle on [1,2,3,4,5]
+    node200 appends 6, now the value is [1,2,3,4,5,6]
+    but this value is on node200 not node100
+    It seems what we actually want to do is forward the whole get(key1).append(6) action to the node that holds key1, but how?
+    Maybe we need to figure out all the operations our data structures have in common and make them top level methods instead,
+    e.g. 
+    get(key1,...).append(6)      becomes    append(key1, ..., 6)
+    
+    then we'd no longer include the mutable methods in datatypes\listtype, etc. 
+    
+    this only needs to be done for the mutable methods
+    append
+    extend
+    insert
+    setitem
+    pop
+    popleft
+    popright 
+    reverse
+    sort
+    
+
+ 
+
+Also look at wackamole (but it doesn't seem to run on Windows(?))
+http://www.backhand.org/wackamole/
+
+The tech term to google is "group messaging"
+
+"Broadcast is not what you want. Since there could and probably will be devices attached to this network 
+which don't care about your message, you should use Multicast. Unlike broadcast messages, which must be 
+sent to and processed by every client on the network, Multicast messages are delivered only to interested 
+clients (ie those which have some intention to receive this particular type of message and act on it).
+If you later scale this system up so that it needs to be routed over a large network, multicast can scale 
+to that, whereas broadcast won't, so you gain a scalability benefit which you might appreciate later. 
+Meanwhile you eliminate unnecessary overhead in switches and other devices that don't need to see these 
+"something changed" messages."
+
+"Should I be setting any particular configuration for multicast support on
+windows host? Are there any ms applications which support multicast and could
+be used for testing?
+No. To send: just send UDP or raw IP to 224.x.x.x. To receive: assign a
+group address (same value of 224.x.x.x) by IP_ADD_MEMBERSHIP, then do the usual
+recvfrom() on it."
+(Also see http://www.huque.com/software/mctester/)
+
+What about ICE? http://www.zeroc.com/index.html
+
+http://zookeeper.apache.org/doc/r3.4.2/zookeeperOver.html#Implementation
+
+TODO: Master/slave binary star pattern: see here for ZeroMQ
+http://zguide.zeromq.org/page:all
+
+TODO: I think the clustering stuff can all be done with ZeroMQ, see some of the advanced patterns in the
+guide such as the worked Inter-broker routing example.
+Also see A Shared Key-Value Cache (Clone Pattern), this sounds a lot like what REDIS SLAVEOF does
+
+"Here, then, is the Clustered Hashmap Protocol, which "defines a cluster-wide key-value hashmap, and mechanisms 
+for sharing this across a set of clients. CHP allows clients to work with subtrees of the hashmap, to update values, 
+and to define ephemeral values."
+http://rfc.zeromq.org/spec:12
+
+
+Also could use RabbitMQ or some such to keep track of cluster...
+
+
+Another idea
+- could run recolsvr in PyPy and use the ctypes ZeroMQ bindings (but would need alternative implementations
+    of the other data types like bitarray, etc in Python instead of C)
+- TODO: do an experiment to see if this is actually faster (?)
+
+# TODO: sqlite performance--look into pragmas
+# synchronous - controls fsync
+# cache_size
+# journal_mode = look into 'wal' mode it seems like it's a good fit for our usage
+#   hmmm...but I don't seem to be able to set this.
+# http://stackoverflow.com/questions/1711631/how-do-i-improve-the-performance-of-sqlite
+# http://web.utk.edu/~jplyon/sqlite/SQLite_optimization_FAQ.html
+
+# TODO: mxBase includes mxBeeBase which is an on disk B+ tree including 
+mxBeeBase comes with two readily useable on-disk dictionary implementations: BeeDict and BeeStringDict.
+NO: showstopper--win64 not supported 
+
+# TODO: consider TreeDict data structure
+http://www.stat.washington.edu/~hoytak/code/treedict/index.html
+
+# TODO: 
+consider that for a numpy array stored at <key> a common operation would be
+put(<key>, x, y, value) so the database should support 2 subkeys
+
+# TODO: consider geospatial data
+and geo-indexing, e.g. somehow index what's close to what
+
+Consider using HDF5 instead of sqlite, either via HDF5.py or PyTables or some other wrapper (?)
+Also see metakit (http://equi4.com/metakit/)
+Also see Berkeley DB recno table
+"Overall, BerkeleyDB can be extremely fast - I recently designed a built a data analysis platform 
+for an employer that was capable of doing 40k inserts per second on an 8 core x86 system (while at 
+the same time doing thousands of reads per second) with a dataset in the 30G range. This was with 
+full transactional protection." 
+
+NOTE: can find binaries for 2.7 even 64 bit for many packages here
+http://www.lfd.uci.edu/~gohlke/pythonlibs/
+including iGraph TODO: include iGraph data structures as types in recol?
+TODO: include PySparse also seen at http://www.lfd.uci.edu/~gohlke/pythonlibs/? what other cool types?
+
+Stats with some data
+loaded 1,100,011 rows in 20.88 secs
+
+# TODO: take a look at the new io module, buffered streams etc.
+
 For sharding/clustering, consider openpgm with zeromq
 it's tricky to setup, see here:
 lists.zeromq.org/pipermail/zeromq-dev/2011-April/010715.html
@@ -540,7 +719,8 @@ class JournalWriterThread(threading.Thread):
         self.need_fsync = False
 
     def process_tx(self, tx):
-        msg = "".join(["%d:%s:%s:%s:%s\n" % (txid, repr(key), cmd, args, serialize(_unwrap(val))) for txid, key, cmd, args, val in tx])
+        ts = str(datetime.datetime.utcnow())
+        msg = "".join(["%s|%d|%s|%s|%s|%s\n" % (ts, txid, repr(key), cmd, args, serialize(_unwrap(val))) for txid, key, cmd, args, val in tx])
         self.journal.write(msg)
         self.need_fsync = True
         # TODO: currently we fsync on demand (client calls fsync()) or when the queue is idle, but if queue is 
@@ -747,6 +927,10 @@ def echo(value):
 def keys():
     return sorted(D.keys())
 
+# TODO: do we want to expose this?
+def iterkeys():
+    return D.iterkeys()
+
 def randkey(iterate=False):
     choice = random.randrange(len(D))
     # TODO: instantiating keys() could be very expensive--consider iteration?
@@ -803,6 +987,8 @@ def _get(key, *idxs, **kwargs):
 get = _get
 
 def mget(*keys, **kwargs):
+    # TODO: currently if just one key is not found the whole operation returns KeyError; would be
+    # better if we return the ones we can
     return [(get(key, kwargs=kwargs) if type(key) in STRING_TYPES else \
              get(key[0], *tuple(key[1:]), **kwargs)) for key in keys]
 
@@ -1167,6 +1353,7 @@ EVAL_LOCALS = { # modules
                 "help" : help,
                 "incr" : incr,
                 "info" : info,
+                "iterkeys" : iterkeys,
                 "j2p" : j2p,
                 "keys" : keys,
                 "kind" : kind,
@@ -1251,10 +1438,13 @@ class Server:
     def load_from_db(self):
         self.curs.execute("select * from master order by key;")
         # TODO: need lazy iterator fetch here
-        rows = 0
+        rowcount = 0
         start = time.time()
-        for row in self.curs.fetchall():
-            rows += 1
+        print "start of fetchall..." # TODO:
+        rows = self.curs.fetchall() # TODO: replace with lazy/fetchmany thing
+        print "end of fetchall..." # TODO:
+        for row in rows:
+            rowcount += 1
             key, val = row
             val = deserialize(val)
             try:
@@ -1262,7 +1452,7 @@ class Server:
             except Exception:
                 log.exception("failed to deserialize row: %s" % repr(row))
             #print row
-        log.info("loaded %d rows in %.2f secs" % (rows, time.time()-start))
+        log.info("loaded %d rows in %.2f secs" % (rowcount, time.time()-start))
 
     def do_expiry(self, now=None):
         if not now:
