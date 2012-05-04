@@ -1,4 +1,28 @@
 """
+So my latest thinking is that maybe we use leveldb/nessdb or some such as the backing store, 
+make the client lib multithreaded, do away with our own journal writer/reader, implement
+p2p/chord/kademlia for auto-sharding/scaling, and also slaveof-style failover. Also continue to support a rich api
+of datatypes, but perhaps use the mutator-style, e.g. append(key, [idxs,...], value) instead 
+of get(key, [idxs,...]).append(value)
+TODO: what is http://telehash.org/
+
+TODO: should I just use leveldb as storage, then we don't need txlog/sqlite/etc
+http://code.google.com/p/leveldb/
+So the project could be to put a server in front of this, implement the p2p stuff, etc...
+The binary values would be pickles.
+Another advantage is that data is sorted by key--allows range queries, e.g. get me all keys that start with People
+Another advantage of this is you can use a dataset larger than memory, which REDIS can't do
+(TODO: well, seems someone is doing this already https://github.com/srinikom/leveldb-server
+take a look at this code because it also demonstrates multithreaded zeromq from python
+TODO: consider using leveldb for grid/procman, compare performance
+)
+Also compare to nessdb
+https://github.com/shuttler/nessDB
+
+TODO: use snappy to compress data in the sqlite db
+
+Also take a look at leveldb
+http://code.google.com/p/leveldb/
 
 
 # TODO: look into SQLLite Studio
@@ -32,11 +56,15 @@ http://blog.notdot.net/2009/11/Implementing-a-DHT-in-Go-part-1 (and part 2)
 http://www.bittorrent.org/beps/bep_0005.html
 http://www.linuxjournal.com/article/6797
 
+TODO: read http://stackoverflow.com/questions/7700562/dht-bittorrent-vs-kademlia-vs-clones-python
+
 Chimera seems to be a successor to Tapestry (?)
 Implementation of Chimera in C - this is a good example of what I envision, an overlay network that can make callbacks
 into client code and which can route app-layer messages in addition to message required by the DHT. 
 http://current.cs.ucsb.edu/projects/chimera/download.html
 See the docs folder in that download for more info
+
+Kademlia seems to be a successor to Chord...(?)
 
 grep pypi for dht, etc.
 grep github for dht, chord, etc.
@@ -116,6 +144,7 @@ recvfrom() on it."
 What about ICE? http://www.zeroc.com/index.html
 
 http://zookeeper.apache.org/doc/r3.4.2/zookeeperOver.html#Implementation
+Look for Python bindings
 
 TODO: Master/slave binary star pattern: see here for ZeroMQ
 http://zguide.zeromq.org/page:all
@@ -159,6 +188,10 @@ put(<key>, x, y, value) so the database should support 2 subkeys
 
 # TODO: consider geospatial data
 and geo-indexing, e.g. somehow index what's close to what
+http://en.wikipedia.org/wiki/Geohash
+http://pypi.python.org/pypi/Geohash/
+http://www.mongodb.org/display/DOCS/Geospatial+Indexing
+
 
 Consider using HDF5 instead of sqlite, either via HDF5.py or PyTables or some other wrapper (?)
 Also see metakit (http://equi4.com/metakit/)
