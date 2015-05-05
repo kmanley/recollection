@@ -268,9 +268,4 @@ Take for a moment, the �timemodule.c� code we pasted above. This means that 
 
 __________________________________________________________________
 
-Kevin T. Manley | BNY Mellon Asset Servicing
-Tel 203.341.3313 | Cell 860.978.0644 | kevin.manley@bwater.com
- 
-You have received this email from a BNY Mellon employee providing 
-back office support to Bridgewater.
 
