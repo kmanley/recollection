@@ -266,6 +266,3 @@ Benchmark to see if this is feasible
 http://jessenoller.com/2009/02/01/python-threads-and-the-global-interpreter-lock/
 Take for a moment, the �timemodule.c� code we pasted above. This means that if you have a threaded appli�ca�tion, and want the GIL to be released reg�u�larly by your threads, you can call �time.sleep(.0001)� or some other tiny amount, and the GIL will be mag�i�cally released, and your other thread(s) will run. Most appli�ca�tion devel�op�ers wouldn�t like this solu�tion, but it is a com�mon �work around� for the GIL limitation.
 
-__________________________________________________________________
-
-
